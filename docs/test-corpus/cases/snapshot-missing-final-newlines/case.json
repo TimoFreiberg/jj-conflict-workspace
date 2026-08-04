@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "case_name": "snapshot-missing-final-newlines",
+  "status": "supported",
+  "style": "snapshot",
+  "description": "Snapshot materialization where the final conflict marker has no newline and each second-region section has a separator EOL.",
+  "source": {
+    "path": "lib/tests/test_conflicts.rs",
+    "symbol": "test_update_conflict_from_content_no_eol",
+    "line_range": [
+      2164,
+      2187
+    ],
+    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L2164-L2187"
+  },
+  "normalization": {
+    "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",
+    "rust_literal_escape_decoding": "Rust byte/string literal escapes were decoded once; fixture files contain resulting bytes.",
+    "eof_display_marker_removal": "The upstream [EOF] display marker is metadata only and is not stored in input bytes.",
+    "label_substitutions": "No volatile revision, operation, or commit labels were copied; stable library labels are retained."
+  },
+  "region_count": 2,
+  "regions": [
+    {
+      "region_id": 0,
+      "term_count": 3,
+      "terms": [
+        {
+          "ordinal": 0,
+          "kind": "side",
+          "label": " side #1",
+          "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/regions/region-000/term-000.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 1,
+          "kind": "base",
+          "label": " base",
+          "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/regions/region-000/term-001.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 2,
+          "kind": "side",
+          "label": " side #2",
+          "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/regions/region-000/term-002.term",
+          "synthetic_separator_eol": false
+        }
+      ]
+    },
+    {
+      "region_id": 1,
+      "term_count": 3,
+      "terms": [
+        {
+          "ordinal": 0,
+          "kind": "side",
+          "label": " side #1",
+          "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/regions/region-001/term-000.term",
+          "synthetic_separator_eol": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "base",
+          "label": " base (no terminating newline)",
+          "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/regions/region-001/term-001.term",
+          "synthetic_separator_eol": true
+        },
+        {
+          "ordinal": 2,
+          "kind": "side",
+          "label": " side #2 (no terminating newline)",
+          "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/regions/region-001/term-002.term",
+          "synthetic_separator_eol": true
+        }
+      ]
+    }
+  ],
+  "marker": {
+    "outer_marker_width": 7,
+    "section_marker_width": 7
+  },
+  "resolved_construction": {
+    "rule": "Copy bytes outside each conflict region unchanged and replace each region with its first logical term payload (term-000).",
+    "semantic_claim": "Structural seed only; this is not a human-approved merge."
+  },
+  "artifacts": {
+    "input.snapshot": {
+      "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/input.snapshot",
+      "byte_length": 313,
+      "sha256": "307ce1e49be1f07cdee15ab45475b397a996f17e7f325f5ac1367ea4cd845ff4",
+      "line_ending_mode": "lf",
+      "final_newline": false
+    },
+    "resolved": {
+      "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/resolved",
+      "byte_length": 36,
+      "sha256": "bfe3e72527c4691a0e157c2100ac915df8934f4d0834f714eb482e4943b0dfcb",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    "regions/region-000/term-000.term": {
+      "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/regions/region-000/term-000.term",
+      "byte_length": 12,
+      "sha256": "74f3a68e55d1916df473fd883c3fe9f0a59f341f87bdb6c19f2aab906da69cb5",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-001.term": {
+      "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/regions/region-000/term-001.term",
+      "byte_length": 7,
+      "sha256": "dc91a167dc016058f9151871161f246795574f8e488b1ba72d43403951d4ae68",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-002.term": {
+      "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/regions/region-000/term-002.term",
+      "byte_length": 13,
+      "sha256": "e956aedefb28f37127b12cbb146c1b5d66c702493e9532393e68589a661f717d",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-001/term-000.term": {
+      "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/regions/region-001/term-000.term",
+      "byte_length": 10,
+      "sha256": "989246c7f296fb21cdef825cdc0c11d14a912480437a646a5044701e51bfef56",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": true
+    },
+    "regions/region-001/term-001.term": {
+      "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/regions/region-001/term-001.term",
+      "byte_length": 4,
+      "sha256": "cae662172fd450bb0cd710a769079c05bfc5d8e35efa6576edc7d0377afdd4a2",
+      "line_ending_mode": "none",
+      "final_newline": false,
+      "synthetic_separator_eol": true
+    },
+    "regions/region-001/term-002.term": {
+      "path": "docs/test-corpus/cases/snapshot-missing-final-newlines/regions/region-001/term-002.term",
+      "byte_length": 5,
+      "sha256": "27042f4e6eca7d0b2a7ee4026df2ecfa51d3339e6d122aa099118ecd8563bad9",
+      "line_ending_mode": "none",
+      "final_newline": false,
+      "synthetic_separator_eol": true
+    }
+  }
+}

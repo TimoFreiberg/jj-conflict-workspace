@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "case_name": "snapshot-basic-2-sided",
+  "status": "supported",
+  "style": "snapshot",
+  "description": "Ordinary two-sided snapshot conflict with stable prefix and suffix.",
+  "source": {
+    "path": "lib/tests/test_conflicts.rs",
+    "symbol": "test_materialize_conflict_basic",
+    "line_range": [
+      133,
+      155
+    ],
+    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L133-L155"
+  },
+  "normalization": {
+    "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",
+    "rust_literal_escape_decoding": "Rust byte/string literal escapes were decoded once; fixture files contain resulting bytes.",
+    "eof_display_marker_removal": "The upstream [EOF] display marker is metadata only and is not stored in input bytes.",
+    "label_substitutions": "No volatile revision, operation, or commit labels were copied; stable library labels are retained."
+  },
+  "region_count": 1,
+  "regions": [
+    {
+      "region_id": 0,
+      "term_count": 3,
+      "terms": [
+        {
+          "ordinal": 0,
+          "kind": "side",
+          "label": " side #1",
+          "path": "docs/test-corpus/cases/snapshot-basic-2-sided/regions/region-000/term-000.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 1,
+          "kind": "base",
+          "label": " base",
+          "path": "docs/test-corpus/cases/snapshot-basic-2-sided/regions/region-000/term-001.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 2,
+          "kind": "side",
+          "label": " side #2",
+          "path": "docs/test-corpus/cases/snapshot-basic-2-sided/regions/region-000/term-002.term",
+          "synthetic_separator_eol": false
+        }
+      ]
+    }
+  ],
+  "marker": {
+    "outer_marker_width": 7,
+    "section_marker_width": 7
+  },
+  "resolved_construction": {
+    "rule": "Copy bytes outside each conflict region unchanged and replace each region with its first logical term payload (term-000).",
+    "semantic_claim": "Structural seed only; this is not a human-approved merge."
+  },
+  "artifacts": {
+    "input.snapshot": {
+      "path": "docs/test-corpus/cases/snapshot-basic-2-sided/input.snapshot",
+      "byte_length": 170,
+      "sha256": "10bc7b2952c925276b4f79136950922da0fa874d3b134344f88cae9003e57a1b",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    "resolved": {
+      "path": "docs/test-corpus/cases/snapshot-basic-2-sided/resolved",
+      "byte_length": 55,
+      "sha256": "345c26c84f3ed5de0c550dcd50e2ff8c73ec6346794b9c8e31b4fe8820f60d99",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    "regions/region-000/term-000.term": {
+      "path": "docs/test-corpus/cases/snapshot-basic-2-sided/regions/region-000/term-000.term",
+      "byte_length": 27,
+      "sha256": "1827120bac1ef98e70b7f21eee1fd466cbc2d040779ba21f0e7fa01a3a49570a",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-001.term": {
+      "path": "docs/test-corpus/cases/snapshot-basic-2-sided/regions/region-000/term-001.term",
+      "byte_length": 7,
+      "sha256": "9c60bc932a19cda85d74a5852c20d89262ecdb0ee2e3c28464fd17df0f885439",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-002.term": {
+      "path": "docs/test-corpus/cases/snapshot-basic-2-sided/regions/region-000/term-002.term",
+      "byte_length": 10,
+      "sha256": "07b1ccd39ef265f69317b0b2899e66e30c41163d2fc1edc0645b53b0fee56962",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    }
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "case_name": "snapshot-3-sided-with-multiple-bases",
+  "status": "supported",
+  "style": "snapshot",
+  "description": "Three-sided snapshot conflict containing two base terms.",
+  "source": {
+    "path": "lib/tests/test_conflicts.rs",
+    "symbol": "test_materialize_conflict_three_sides",
+    "line_range": [
+      295,
+      320
+    ],
+    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L295-L320"
+  },
+  "normalization": {
+    "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",
+    "rust_literal_escape_decoding": "Rust byte/string literal escapes were decoded once; fixture files contain resulting bytes.",
+    "eof_display_marker_removal": "The upstream [EOF] display marker is metadata only and is not stored in input bytes.",
+    "label_substitutions": "No volatile revision, operation, or commit labels were copied; stable library labels are retained."
+  },
+  "region_count": 1,
+  "regions": [
+    {
+      "region_id": 0,
+      "term_count": 5,
+      "terms": [
+        {
+          "ordinal": 0,
+          "kind": "side",
+          "label": " side #1",
+          "path": "docs/test-corpus/cases/snapshot-3-sided-with-multiple-bases/regions/region-000/term-000.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 1,
+          "kind": "base",
+          "label": " base #1",
+          "path": "docs/test-corpus/cases/snapshot-3-sided-with-multiple-bases/regions/region-000/term-001.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 2,
+          "kind": "side",
+          "label": " side #2",
+          "path": "docs/test-corpus/cases/snapshot-3-sided-with-multiple-bases/regions/region-000/term-002.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 3,
+          "kind": "base",
+          "label": " base #2",
+          "path": "docs/test-corpus/cases/snapshot-3-sided-with-multiple-bases/regions/region-000/term-003.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 4,
+          "kind": "side",
+          "label": " side #3",
+          "path": "docs/test-corpus/cases/snapshot-3-sided-with-multiple-bases/regions/region-000/term-004.term",
+          "synthetic_separator_eol": false
+        }
+      ]
+    }
+  ],
+  "marker": {
+    "outer_marker_width": 7,
+    "section_marker_width": 7
+  },
+  "resolved_construction": {
+    "rule": "Copy bytes outside each conflict region unchanged and replace each region with its first logical term payload (term-000).",
+    "semantic_claim": "Structural seed only; this is not a human-approved merge."
+  },
+  "artifacts": {
+    "input.snapshot": {
+      "path": "docs/test-corpus/cases/snapshot-3-sided-with-multiple-bases/input.snapshot",
+      "byte_length": 286,
+      "sha256": "461c05d819c1ae35a40da1b6e2b1604c50da9695ecc15c29adbca58a038fc0e0",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    "resolved": {
+      "path": "docs/test-corpus/cases/snapshot-3-sided-with-multiple-bases/resolved",
+      "byte_length": 48,
+      "sha256": "9887fa66c4a919f225f8e247440f622e1273cc6793b4ece7a9cc3a0633aa3324",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    "regions/region-000/term-000.term": {
+      "path": "docs/test-corpus/cases/snapshot-3-sided-with-multiple-bases/regions/region-000/term-000.term",
+      "byte_length": 34,
+      "sha256": "49a0a73852d484f407833933763ff37083c8d1b4c67012f0f2e04a8030f3f99c",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-001.term": {
+      "path": "docs/test-corpus/cases/snapshot-3-sided-with-multiple-bases/regions/region-000/term-001.term",
+      "byte_length": 36,
+      "sha256": "98ac21e7c0fee858ae2e3fe8b3b3b90e673c1ebf7114c9da6fe2635cce1ac6f5",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-002.term": {
+      "path": "docs/test-corpus/cases/snapshot-3-sided-with-multiple-bases/regions/region-000/term-002.term",
+      "byte_length": 34,
+      "sha256": "5b13022c18794cc2516b22c4b9b13b03a3f70ce0e491bd74afbd6f89f490aef0",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-003.term": {
+      "path": "docs/test-corpus/cases/snapshot-3-sided-with-multiple-bases/regions/region-000/term-003.term",
+      "byte_length": 12,
+      "sha256": "864299bf60608538daf8faf81cc7a84ef592efa629429b2251f8d69d4ccca9ae",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-004.term": {
+      "path": "docs/test-corpus/cases/snapshot-3-sided-with-multiple-bases/regions/region-000/term-004.term",
+      "byte_length": 23,
+      "sha256": "7736b782b3a4303b42bc2839508e391920d6ee885752a76810a0446a5f8a83eb",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    }
+  }
+}

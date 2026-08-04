@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "case_name": "malformed-missing-section-header",
+  "status": "reference",
+  "style": "reference",
+  "description": "Snapshot-shaped conflict missing its first side header.",
+  "source": {
+    "path": "lib/tests/test_conflicts.rs",
+    "symbol": "test_parse_conflict_snapshot_missing_header",
+    "line_range": [
+      1546,
+      1566
+    ],
+    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1546-L1566"
+  },
+  "normalization": {
+    "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",
+    "rust_literal_escape_decoding": "Rust byte/string literal escapes were decoded once; fixture files contain resulting bytes.",
+    "eof_display_marker_removal": "The upstream [EOF] display marker is metadata only and is not stored in input bytes.",
+    "label_substitutions": "No volatile revision, operation, or commit labels were copied; stable library labels are retained."
+  },
+  "expected_disposition": "malformed",
+  "reason": "The first +++++++ section header is missing.",
+  "upstream_parser_behavior": "rejected",
+  "artifacts": {
+    "input.snapshot": {
+      "path": "docs/test-corpus/reference/malformed-missing-section-header/input.snapshot",
+      "byte_length": 62,
+      "sha256": "8146242b4a53e986dc32c757f6228856981173104904878d9698fed648063b56",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    }
+  }
+}

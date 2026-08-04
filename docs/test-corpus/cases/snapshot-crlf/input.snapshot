@@ -1,0 +1,9 @@
+
+<<<<<<< conflict 1 of 1
++++++++ side #1
+cc
+------- base
+aa
++++++++ side #2
+bb
+>>>>>>> conflict 1 of 1 ends

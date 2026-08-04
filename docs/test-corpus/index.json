@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "upstream": {
+    "repository": "https://github.com/jj-vcs/jj",
+    "commit": "6b27ec86af32ff84c209367d2710d234cb192622"
+  },
+  "cases": [
+    {
+      "case_name": "snapshot-basic-2-sided",
+      "status": "supported",
+      "input_path": "docs/test-corpus/cases/snapshot-basic-2-sided/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_materialize_conflict_basic",
+        "line_range": [
+          133,
+          155
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L133-L155"
+      },
+      "sha256": "10bc7b2952c925276b4f79136950922da0fa874d3b134344f88cae9003e57a1b",
+      "byte_length": 170,
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    {
+      "case_name": "snapshot-3-sided-with-multiple-bases",
+      "status": "supported",
+      "input_path": "docs/test-corpus/cases/snapshot-3-sided-with-multiple-bases/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_materialize_conflict_three_sides",
+        "line_range": [
+          295,
+          320
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L295-L320"
+      },
+      "sha256": "461c05d819c1ae35a40da1b6e2b1604c50da9695ecc15c29adbca58a038fc0e0",
+      "byte_length": 286,
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    {
+      "case_name": "snapshot-multiple-regions",
+      "status": "supported",
+      "input_path": "docs/test-corpus/cases/snapshot-multiple-regions/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_materialize_parse_roundtrip",
+        "line_range": [
+          483,
+          580
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L483-L580",
+        "note": "The upstream round-trip body has two stable regions; this corpus adapts its diff-style assertion to the snapshot style under test."
+      },
+      "sha256": "ff25bcd1ae9ce5d67acf05db187130e0d7b646355316c9e110bd58283c124756",
+      "byte_length": 320,
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    {
+      "case_name": "snapshot-long-markers-and-marker-like-content",
+      "status": "supported",
+      "input_path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_update_conflict_from_content_with_long_markers",
+        "line_range": [
+          1948,
+          2107
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1948-L2107",
+        "note": "Canonical extraction uses the library snapshot assertion, not the corroborating CLI test."
+      },
+      "sha256": "f2f441c26b8952b48ece73ae5a9771b192ead6a1c86256af965100eb63f28197",
+      "byte_length": 376,
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    {
+      "case_name": "snapshot-missing-final-newlines",
+      "status": "supported",
+      "input_path": "docs/test-corpus/cases/snapshot-missing-final-newlines/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_update_conflict_from_content_no_eol",
+        "line_range": [
+          2164,
+          2187
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L2164-L2187"
+      },
+      "sha256": "307ce1e49be1f07cdee15ab45475b397a996f17e7f325f5ac1367ea4cd845ff4",
+      "byte_length": 313,
+      "line_ending_mode": "lf",
+      "final_newline": false
+    },
+    {
+      "case_name": "snapshot-crlf",
+      "status": "supported",
+      "input_path": "docs/test-corpus/cases/snapshot-crlf/input.snapshot",
+      "source": {
+        "path": "lib/src/conflicts.rs",
+        "symbol": "test_materialize_conflict",
+        "line_range": [
+          1335,
+          1408
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/src/conflicts.rs#L1335-L1408",
+        "note": "Tuple: base=aa, side1=bb, side2=cc, all with ending EOL, Snapshot style, CRLF_EOL."
+      },
+      "sha256": "38eb0e54035ce9b8a9c984be4f994d2b40304356cf3ddebb47a36e29934e45a9",
+      "byte_length": 117,
+      "line_ending_mode": "crlf",
+      "final_newline": true
+    },
+    {
+      "case_name": "snapshot-custom-labels",
+      "status": "supported",
+      "input_path": "docs/test-corpus/cases/snapshot-custom-labels/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_materialize_conflict_with_labels",
+        "line_range": [
+          854,
+          908
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L854-L908"
+      },
+      "sha256": "c6336c68f0cf532ae5cf43a6a327fa83477bc4dd995419957ebde9c349ff7c86",
+      "byte_length": 162,
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    {
+      "case_name": "snapshot-empty-term-or-deletion",
+      "status": "supported",
+      "input_path": "docs/test-corpus/cases/snapshot-empty-term-or-deletion/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_materialize_conflict_no_newlines_at_eof",
+        "line_range": [
+          645,
+          693
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L645-L693",
+        "note": "The empty-side edge is adapted to snapshot style; the upstream assertion shown here is diff style."
+      },
+      "sha256": "91e33c771efc3df012e1448ce44d8fdf34e1ef5023d6a3575891a3d67471b0c6",
+      "byte_length": 109,
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    {
+      "case_name": "default-diff-style-2-sided",
+      "status": "reference",
+      "input_path": "docs/test-corpus/reference/default-diff-style-2-sided/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_materialize_conflict_basic",
+        "line_range": [
+          89,
+          106
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L89-L106"
+      },
+      "sha256": "5486f6e6abb7572bc771e0027d40a1cdc2226f57fcb8afb56fa290fe29b18e60",
+      "byte_length": 192,
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    {
+      "case_name": "git-diff3-style-2-sided",
+      "status": "reference",
+      "input_path": "docs/test-corpus/reference/git-diff3-style-2-sided/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_parse_conflict_simple",
+        "line_range": [
+          1104,
+          1141
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1104-L1141"
+      },
+      "sha256": "990370f133b91e5cc36ee223e2c72efe0a13528039cd728b4b7147446b38588e",
+      "byte_length": 119,
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    {
+      "case_name": "malformed-missing-section-header",
+      "status": "reference",
+      "input_path": "docs/test-corpus/reference/malformed-missing-section-header/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_parse_conflict_snapshot_missing_header",
+        "line_range": [
+          1546,
+          1566
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1546-L1566"
+      },
+      "sha256": "8146242b4a53e986dc32c757f6228856981173104904878d9698fed648063b56",
+      "byte_length": 62,
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    {
+      "case_name": "malformed-missing-diff",
+      "status": "reference",
+      "input_path": "docs/test-corpus/reference/malformed-missing-diff/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_parse_conflict_malformed_diff",
+        "line_range": [
+          1521,
+          1543
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1521-L1543"
+      },
+      "sha256": "6a8395dc0e5b360ef18857f0ec18b6d1f9afaf3848e2ac023852ccea35df015f",
+      "byte_length": 81,
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    {
+      "case_name": "malformed-mixed-header-style",
+      "status": "reference",
+      "input_path": "docs/test-corpus/reference/malformed-mixed-header-style/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_parse_conflict_mixed_header_styles",
+        "line_range": [
+          1640,
+          1660
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1640-L1660"
+      },
+      "sha256": "27ac06bafbb18b6fa93bca122ac71d2e85f217f2a20774f539a7093bae04c45c",
+      "byte_length": 70,
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    {
+      "case_name": "wrong-arity",
+      "status": "reference",
+      "input_path": "docs/test-corpus/reference/wrong-arity/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_parse_conflict_wrong_arity",
+        "line_range": [
+          1450,
+          1472
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1450-L1472"
+      },
+      "sha256": "19cb1e1625a5500bbf0237e1e71df6339c79cb0fd9eff79ca7c57bda04d27c1f",
+      "byte_length": 82,
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    {
+      "case_name": "git-too-many-sides",
+      "status": "reference",
+      "input_path": "docs/test-corpus/reference/git-too-many-sides/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_parse_conflict_git_too_many_sides",
+        "line_range": [
+          1613,
+          1637
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1613-L1637"
+      },
+      "sha256": "4bc17ec52e7b3a636515d4b4ecc86e1b61e2ca2c7179cfb68f183a72ac1d7718",
+      "byte_length": 72,
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    {
+      "case_name": "diff-whitespace-stripped",
+      "status": "reference",
+      "input_path": "docs/test-corpus/reference/diff-whitespace-stripped/input.snapshot",
+      "source": {
+        "path": "lib/tests/test_conflicts.rs",
+        "symbol": "test_parse_conflict_diff_stripped_whitespace",
+        "line_range": [
+          1404,
+          1447
+        ],
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1404-L1447"
+      },
+      "sha256": "1ee55c3e9697dd8536e2a10b9150c4359ff038081715475d5a0889740f258244",
+      "byte_length": 85,
+      "line_ending_mode": "mixed",
+      "final_newline": true
+    }
+  ]
+}

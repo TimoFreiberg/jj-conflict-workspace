@@ -1,0 +1,23 @@
+<<<<<<< conflict 1 of 2
++++++++ side #1
+line 1 left
+line 2 left
+------- base
+line 1
+line 2
++++++++ side #2
+line 1 right
+line 2
+>>>>>>> conflict 1 of 2 ends
+line 3
+<<<<<<< conflict 2 of 2
++++++++ side #1
+line 4
+line 5 left
+------- base
+line 4
+line 5
++++++++ side #2
+line 4 right
+line 5 right
+>>>>>>> conflict 2 of 2 ends

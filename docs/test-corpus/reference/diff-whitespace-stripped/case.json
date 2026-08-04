@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "case_name": "diff-whitespace-stripped",
+  "status": "reference",
+  "style": "reference",
+  "description": "Diff-style conflict whose empty diff line lost its leading space.",
+  "source": {
+    "path": "lib/tests/test_conflicts.rs",
+    "symbol": "test_parse_conflict_diff_stripped_whitespace",
+    "line_range": [
+      1404,
+      1447
+    ],
+    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1404-L1447"
+  },
+  "normalization": {
+    "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",
+    "rust_literal_escape_decoding": "Rust byte/string literal escapes were decoded once; fixture files contain resulting bytes.",
+    "eof_display_marker_removal": "The upstream [EOF] display marker is metadata only and is not stored in input bytes.",
+    "label_substitutions": "No volatile revision, operation, or commit labels were copied; stable library labels are retained."
+  },
+  "expected_disposition": "reference_only",
+  "reason": "Upstream accepts this whitespace-tolerant diff input, but v1 must not silently accept default diff style.",
+  "upstream_parser_behavior": "accepted",
+  "artifacts": {
+    "input.snapshot": {
+      "path": "docs/test-corpus/reference/diff-whitespace-stripped/input.snapshot",
+      "byte_length": 85,
+      "sha256": "1ee55c3e9697dd8536e2a10b9150c4359ff038081715475d5a0889740f258244",
+      "line_ending_mode": "mixed",
+      "final_newline": true
+    }
+  }
+}

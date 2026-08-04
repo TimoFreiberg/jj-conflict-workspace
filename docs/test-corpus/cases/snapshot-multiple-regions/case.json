@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "case_name": "snapshot-multiple-regions",
+  "status": "supported",
+  "style": "snapshot",
+  "description": "Two independent snapshot regions separated by stable content.",
+  "source": {
+    "path": "lib/tests/test_conflicts.rs",
+    "symbol": "test_materialize_parse_roundtrip",
+    "line_range": [
+      483,
+      580
+    ],
+    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L483-L580",
+    "note": "The upstream round-trip body has two stable regions; this corpus adapts its diff-style assertion to the snapshot style under test."
+  },
+  "normalization": {
+    "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",
+    "rust_literal_escape_decoding": "Rust byte/string literal escapes were decoded once; fixture files contain resulting bytes.",
+    "eof_display_marker_removal": "The upstream [EOF] display marker is metadata only and is not stored in input bytes.",
+    "label_substitutions": "No volatile revision, operation, or commit labels were copied; stable library labels are retained."
+  },
+  "region_count": 2,
+  "regions": [
+    {
+      "region_id": 0,
+      "term_count": 3,
+      "terms": [
+        {
+          "ordinal": 0,
+          "kind": "side",
+          "label": " side #1",
+          "path": "docs/test-corpus/cases/snapshot-multiple-regions/regions/region-000/term-000.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 1,
+          "kind": "base",
+          "label": " base",
+          "path": "docs/test-corpus/cases/snapshot-multiple-regions/regions/region-000/term-001.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 2,
+          "kind": "side",
+          "label": " side #2",
+          "path": "docs/test-corpus/cases/snapshot-multiple-regions/regions/region-000/term-002.term",
+          "synthetic_separator_eol": false
+        }
+      ]
+    },
+    {
+      "region_id": 1,
+      "term_count": 3,
+      "terms": [
+        {
+          "ordinal": 0,
+          "kind": "side",
+          "label": " side #1",
+          "path": "docs/test-corpus/cases/snapshot-multiple-regions/regions/region-001/term-000.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 1,
+          "kind": "base",
+          "label": " base",
+          "path": "docs/test-corpus/cases/snapshot-multiple-regions/regions/region-001/term-001.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 2,
+          "kind": "side",
+          "label": " side #2",
+          "path": "docs/test-corpus/cases/snapshot-multiple-regions/regions/region-001/term-002.term",
+          "synthetic_separator_eol": false
+        }
+      ]
+    }
+  ],
+  "marker": {
+    "outer_marker_width": 7,
+    "section_marker_width": 7
+  },
+  "resolved_construction": {
+    "rule": "Copy bytes outside each conflict region unchanged and replace each region with its first logical term payload (term-000).",
+    "semantic_claim": "Structural seed only; this is not a human-approved merge."
+  },
+  "artifacts": {
+    "input.snapshot": {
+      "path": "docs/test-corpus/cases/snapshot-multiple-regions/input.snapshot",
+      "byte_length": 320,
+      "sha256": "ff25bcd1ae9ce5d67acf05db187130e0d7b646355316c9e110bd58283c124756",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    "resolved": {
+      "path": "docs/test-corpus/cases/snapshot-multiple-regions/resolved",
+      "byte_length": 50,
+      "sha256": "fce3ea943c4fcf9a0d795cca217eeb8341771fc188e2ae749a3fb6e89108c9c9",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    "regions/region-000/term-000.term": {
+      "path": "docs/test-corpus/cases/snapshot-multiple-regions/regions/region-000/term-000.term",
+      "byte_length": 24,
+      "sha256": "f2d53fbc0af00c12e7e9b2d80c980c0e6c474923d1f83e27bd1472a046aed145",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-001.term": {
+      "path": "docs/test-corpus/cases/snapshot-multiple-regions/regions/region-000/term-001.term",
+      "byte_length": 14,
+      "sha256": "9060554863a62b9db5f726216876654e561896071d2e6480f2048b70e0fdadb9",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-002.term": {
+      "path": "docs/test-corpus/cases/snapshot-multiple-regions/regions/region-000/term-002.term",
+      "byte_length": 20,
+      "sha256": "fdeacb44b5bfe909021c2b9130d9222dd85fadf03fb67a1a03270fd9e0ff8a4e",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-001/term-000.term": {
+      "path": "docs/test-corpus/cases/snapshot-multiple-regions/regions/region-001/term-000.term",
+      "byte_length": 19,
+      "sha256": "3a8737cedb98e43c1af35e758bcbbe6ebe95b055daa563ca72aa93e828c6826f",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-001/term-001.term": {
+      "path": "docs/test-corpus/cases/snapshot-multiple-regions/regions/region-001/term-001.term",
+      "byte_length": 14,
+      "sha256": "6dd80d829b7f850dc341546ba79ba2f0353b3f02321b528dd142195de3476a18",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-001/term-002.term": {
+      "path": "docs/test-corpus/cases/snapshot-multiple-regions/regions/region-001/term-002.term",
+      "byte_length": 26,
+      "sha256": "d531d9e4534231dca8ee04b0916c1407a673e81e06028858764253b9a21c9191",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    }
+  }
+}

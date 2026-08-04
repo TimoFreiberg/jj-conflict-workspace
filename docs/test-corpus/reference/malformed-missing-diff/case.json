@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "case_name": "malformed-missing-diff",
+  "status": "reference",
+  "style": "reference",
+  "description": "JJ-style hunk with a payload line missing the required diff prefix.",
+  "source": {
+    "path": "lib/tests/test_conflicts.rs",
+    "symbol": "test_parse_conflict_malformed_diff",
+    "line_range": [
+      1521,
+      1543
+    ],
+    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1521-L1543"
+  },
+  "normalization": {
+    "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",
+    "rust_literal_escape_decoding": "Rust byte/string literal escapes were decoded once; fixture files contain resulting bytes.",
+    "eof_display_marker_removal": "The upstream [EOF] display marker is metadata only and is not stored in input bytes.",
+    "label_substitutions": "No volatile revision, operation, or commit labels were copied; stable library labels are retained."
+  },
+  "expected_disposition": "malformed",
+  "reason": "The line `line 4` lacks a leading diff space, plus, or minus.",
+  "upstream_parser_behavior": "rejected",
+  "artifacts": {
+    "input.snapshot": {
+      "path": "docs/test-corpus/reference/malformed-missing-diff/input.snapshot",
+      "byte_length": 81,
+      "sha256": "6a8395dc0e5b360ef18857f0ec18b6d1f9afaf3848e2ac023852ccea35df015f",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    }
+  }
+}

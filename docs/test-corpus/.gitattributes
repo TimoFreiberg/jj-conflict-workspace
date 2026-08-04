@@ -1,0 +1,6 @@
+# Conflict corpus fixtures are byte-sensitive; never normalize their EOLs.
+cases/**/input.snapshot -text
+cases/**/resolved -text
+cases/**/regions/**/term-*.term -text
+reference/**/input.snapshot -text
+reference/**/raw-bytes -text

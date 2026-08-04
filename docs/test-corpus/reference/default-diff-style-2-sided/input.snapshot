@@ -1,0 +1,14 @@
+line 1
+line 2
+<<<<<<< conflict 1 of 1
++++++++ side #1
+left 3.1
+left 3.2
+left 3.3
+%%%%%%% diff from: base
+\\\\\        to: side #2
+-line 3
++right 3.1
+>>>>>>> conflict 1 of 1 ends
+line 4
+line 5

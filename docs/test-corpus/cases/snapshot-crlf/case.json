@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "case_name": "snapshot-crlf",
+  "status": "supported",
+  "style": "snapshot",
+  "description": "CRLF snapshot materialization from the aa/bb/cc matrix tuple.",
+  "source": {
+    "path": "lib/src/conflicts.rs",
+    "symbol": "test_materialize_conflict",
+    "line_range": [
+      1335,
+      1408
+    ],
+    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/src/conflicts.rs#L1335-L1408",
+    "note": "Tuple: base=aa, side1=bb, side2=cc, all with ending EOL, Snapshot style, CRLF_EOL."
+  },
+  "normalization": {
+    "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",
+    "rust_literal_escape_decoding": "Rust byte/string literal escapes were decoded once; fixture files contain resulting bytes.",
+    "eof_display_marker_removal": "The upstream [EOF] display marker is metadata only and is not stored in input bytes.",
+    "label_substitutions": "No volatile revision, operation, or commit labels were copied; stable library labels are retained."
+  },
+  "region_count": 1,
+  "regions": [
+    {
+      "region_id": 0,
+      "term_count": 3,
+      "terms": [
+        {
+          "ordinal": 0,
+          "kind": "side",
+          "label": " side #1",
+          "path": "docs/test-corpus/cases/snapshot-crlf/regions/region-000/term-000.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 1,
+          "kind": "base",
+          "label": " base",
+          "path": "docs/test-corpus/cases/snapshot-crlf/regions/region-000/term-001.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 2,
+          "kind": "side",
+          "label": " side #2",
+          "path": "docs/test-corpus/cases/snapshot-crlf/regions/region-000/term-002.term",
+          "synthetic_separator_eol": false
+        }
+      ]
+    }
+  ],
+  "marker": {
+    "outer_marker_width": 7,
+    "section_marker_width": 7
+  },
+  "resolved_construction": {
+    "rule": "Copy bytes outside each conflict region unchanged and replace each region with its first logical term payload (term-000).",
+    "semantic_claim": "Structural seed only; this is not a human-approved merge."
+  },
+  "artifacts": {
+    "input.snapshot": {
+      "path": "docs/test-corpus/cases/snapshot-crlf/input.snapshot",
+      "byte_length": 117,
+      "sha256": "38eb0e54035ce9b8a9c984be4f994d2b40304356cf3ddebb47a36e29934e45a9",
+      "line_ending_mode": "crlf",
+      "final_newline": true
+    },
+    "resolved": {
+      "path": "docs/test-corpus/cases/snapshot-crlf/resolved",
+      "byte_length": 6,
+      "sha256": "1d86173df1003e0205577d927b722653d48c54808a75af10d03ae12bd31f79ee",
+      "line_ending_mode": "crlf",
+      "final_newline": true
+    },
+    "regions/region-000/term-000.term": {
+      "path": "docs/test-corpus/cases/snapshot-crlf/regions/region-000/term-000.term",
+      "byte_length": 4,
+      "sha256": "b9eeca7edc9115a8f875590bf2b7b5955be0080ec5c7d490e3e0b7677f026af4",
+      "line_ending_mode": "crlf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-001.term": {
+      "path": "docs/test-corpus/cases/snapshot-crlf/regions/region-000/term-001.term",
+      "byte_length": 4,
+      "sha256": "77a1e8e39473ba9a556d10263cdcebaf239004aa2d1fa35246044470267be541",
+      "line_ending_mode": "crlf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-002.term": {
+      "path": "docs/test-corpus/cases/snapshot-crlf/regions/region-000/term-002.term",
+      "byte_length": 4,
+      "sha256": "e45c1a83cc381fedd08087b0ad8badbd26656b31b700410da5ed9c7212a4bc2f",
+      "line_ending_mode": "crlf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "case_name": "wrong-arity",
+  "status": "reference",
+  "style": "reference",
+  "description": "A valid two-sided-looking snapshot-shaped hunk supplied where three sides are expected.",
+  "source": {
+    "path": "lib/tests/test_conflicts.rs",
+    "symbol": "test_parse_conflict_wrong_arity",
+    "line_range": [
+      1450,
+      1472
+    ],
+    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1450-L1472"
+  },
+  "normalization": {
+    "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",
+    "rust_literal_escape_decoding": "Rust byte/string literal escapes were decoded once; fixture files contain resulting bytes.",
+    "eof_display_marker_removal": "The upstream [EOF] display marker is metadata only and is not stored in input bytes.",
+    "label_substitutions": "No volatile revision, operation, or commit labels were copied; stable library labels are retained."
+  },
+  "expected_disposition": "wrong_arity",
+  "reason": "The conflict has two side sections but the caller expects three sides.",
+  "upstream_parser_behavior": "rejected_for_requested_arity",
+  "expected_arity": {
+    "expected_sides": 3,
+    "actual_sides": 2
+  },
+  "artifacts": {
+    "input.snapshot": {
+      "path": "docs/test-corpus/reference/wrong-arity/input.snapshot",
+      "byte_length": 82,
+      "sha256": "19cb1e1625a5500bbf0237e1e71df6339c79cb0fd9eff79ca7c57bda04d27c1f",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    }
+  }
+}

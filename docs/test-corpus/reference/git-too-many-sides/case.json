@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "case_name": "git-too-many-sides",
+  "status": "reference",
+  "style": "reference",
+  "description": "Git-style input containing two right-side sections, which Git syntax cannot represent.",
+  "source": {
+    "path": "lib/tests/test_conflicts.rs",
+    "symbol": "test_parse_conflict_git_too_many_sides",
+    "line_range": [
+      1613,
+      1637
+    ],
+    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1613-L1637"
+  },
+  "normalization": {
+    "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",
+    "rust_literal_escape_decoding": "Rust byte/string literal escapes were decoded once; fixture files contain resulting bytes.",
+    "eof_display_marker_removal": "The upstream [EOF] display marker is metadata only and is not stored in input bytes.",
+    "label_substitutions": "No volatile revision, operation, or commit labels were copied; stable library labels are retained."
+  },
+  "expected_disposition": "wrong_arity",
+  "reason": "Git/diff3 style permits only two sides, but this hunk repeats its right-side separator.",
+  "upstream_parser_behavior": "rejected",
+  "expected_arity": {
+    "expected_sides": 3,
+    "actual_sides": 2,
+    "git_max_sides": 2
+  },
+  "artifacts": {
+    "input.snapshot": {
+      "path": "docs/test-corpus/reference/git-too-many-sides/input.snapshot",
+      "byte_length": 72,
+      "sha256": "4bc17ec52e7b3a636515d4b4ecc86e1b61e2ca2c7179cfb68f183a72ac1d7718",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    }
+  }
+}

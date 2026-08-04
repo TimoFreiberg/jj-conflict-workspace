@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "case_name": "snapshot-empty-term-or-deletion",
+  "status": "supported",
+  "style": "snapshot",
+  "description": "Snapshot conflict whose first side is an explicitly empty term.",
+  "source": {
+    "path": "lib/tests/test_conflicts.rs",
+    "symbol": "test_materialize_conflict_no_newlines_at_eof",
+    "line_range": [
+      645,
+      693
+    ],
+    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L645-L693",
+    "note": "The empty-side edge is adapted to snapshot style; the upstream assertion shown here is diff style."
+  },
+  "normalization": {
+    "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",
+    "rust_literal_escape_decoding": "Rust byte/string literal escapes were decoded once; fixture files contain resulting bytes.",
+    "eof_display_marker_removal": "The upstream [EOF] display marker is metadata only and is not stored in input bytes.",
+    "label_substitutions": "No volatile revision, operation, or commit labels were copied; stable library labels are retained."
+  },
+  "region_count": 1,
+  "regions": [
+    {
+      "region_id": 0,
+      "term_count": 3,
+      "terms": [
+        {
+          "ordinal": 0,
+          "kind": "side",
+          "label": " side #1",
+          "path": "docs/test-corpus/cases/snapshot-empty-term-or-deletion/regions/region-000/term-000.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 1,
+          "kind": "base",
+          "label": " base",
+          "path": "docs/test-corpus/cases/snapshot-empty-term-or-deletion/regions/region-000/term-001.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 2,
+          "kind": "side",
+          "label": " side #2",
+          "path": "docs/test-corpus/cases/snapshot-empty-term-or-deletion/regions/region-000/term-002.term",
+          "synthetic_separator_eol": false
+        }
+      ]
+    }
+  ],
+  "marker": {
+    "outer_marker_width": 7,
+    "section_marker_width": 7
+  },
+  "resolved_construction": {
+    "rule": "Copy bytes outside each conflict region unchanged and replace each region with its first logical term payload (term-000).",
+    "semantic_claim": "Structural seed only; this is not a human-approved merge."
+  },
+  "artifacts": {
+    "input.snapshot": {
+      "path": "docs/test-corpus/cases/snapshot-empty-term-or-deletion/input.snapshot",
+      "byte_length": 109,
+      "sha256": "91e33c771efc3df012e1448ce44d8fdf34e1ef5023d6a3575891a3d67471b0c6",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    "resolved": {
+      "path": "docs/test-corpus/cases/snapshot-empty-term-or-deletion/resolved",
+      "byte_length": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "line_ending_mode": "none",
+      "final_newline": false
+    },
+    "regions/region-000/term-000.term": {
+      "path": "docs/test-corpus/cases/snapshot-empty-term-or-deletion/regions/region-000/term-000.term",
+      "byte_length": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "line_ending_mode": "none",
+      "final_newline": false,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-001.term": {
+      "path": "docs/test-corpus/cases/snapshot-empty-term-or-deletion/regions/region-000/term-001.term",
+      "byte_length": 5,
+      "sha256": "f34848ca92665c342abd5816c9e3eda0e82180671195362bcd0080544a3bc2ac",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-002.term": {
+      "path": "docs/test-corpus/cases/snapshot-empty-term-or-deletion/regions/region-000/term-002.term",
+      "byte_length": 6,
+      "sha256": "55c97802b397ef4da0d8e2ecf4a8fa33c1f4755da0eacec54c62cacbbcfd9713",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    }
+  }
+}

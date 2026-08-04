@@ -1,0 +1,8 @@
+<<<<<<< conflict 1 of 1
++++++++ side 1 conflict label
+side 1
+------- base conflict label
+base 1
++++++++ side 2 conflict label
+side 2
+>>>>>>> conflict 1 of 1 ends

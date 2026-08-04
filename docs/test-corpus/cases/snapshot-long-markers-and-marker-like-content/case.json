@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "case_name": "snapshot-long-markers-and-marker-like-content",
+  "status": "supported",
+  "style": "snapshot",
+  "description": "Two regions with sixteen-byte outer markers and shorter marker-like payload lines.",
+  "source": {
+    "path": "lib/tests/test_conflicts.rs",
+    "symbol": "test_update_conflict_from_content_with_long_markers",
+    "line_range": [
+      1948,
+      2107
+    ],
+    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1948-L2107",
+    "note": "Canonical extraction uses the library snapshot assertion, not the corroborating CLI test."
+  },
+  "normalization": {
+    "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",
+    "rust_literal_escape_decoding": "Rust byte/string literal escapes were decoded once; fixture files contain resulting bytes.",
+    "eof_display_marker_removal": "The upstream [EOF] display marker is metadata only and is not stored in input bytes.",
+    "label_substitutions": "No volatile revision, operation, or commit labels were copied; stable library labels are retained."
+  },
+  "region_count": 2,
+  "regions": [
+    {
+      "region_id": 0,
+      "term_count": 3,
+      "terms": [
+        {
+          "ordinal": 0,
+          "kind": "side",
+          "label": " side #1",
+          "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/regions/region-000/term-000.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 1,
+          "kind": "base",
+          "label": " base",
+          "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/regions/region-000/term-001.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 2,
+          "kind": "side",
+          "label": " side #2",
+          "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/regions/region-000/term-002.term",
+          "synthetic_separator_eol": false
+        }
+      ]
+    },
+    {
+      "region_id": 1,
+      "term_count": 3,
+      "terms": [
+        {
+          "ordinal": 0,
+          "kind": "side",
+          "label": " side #1",
+          "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/regions/region-001/term-000.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 1,
+          "kind": "base",
+          "label": " base",
+          "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/regions/region-001/term-001.term",
+          "synthetic_separator_eol": false
+        },
+        {
+          "ordinal": 2,
+          "kind": "side",
+          "label": " side #2",
+          "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/regions/region-001/term-002.term",
+          "synthetic_separator_eol": false
+        }
+      ]
+    }
+  ],
+  "marker": {
+    "outer_marker_width": 16,
+    "section_marker_width": 16
+  },
+  "resolved_construction": {
+    "rule": "Copy bytes outside each conflict region unchanged and replace each region with its first logical term payload (term-000).",
+    "semantic_claim": "Structural seed only; this is not a human-approved merge."
+  },
+  "artifacts": {
+    "input.snapshot": {
+      "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/input.snapshot",
+      "byte_length": 376,
+      "sha256": "f2f441c26b8952b48ece73ae5a9771b192ead6a1c86256af965100eb63f28197",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    "resolved": {
+      "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/resolved",
+      "byte_length": 39,
+      "sha256": "144087095bb9e6b6046a33e165ffa09a6a933c50a3b3d4613b83a2508eb05188",
+      "line_ending_mode": "lf",
+      "final_newline": true
+    },
+    "regions/region-000/term-000.term": {
+      "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/regions/region-000/term-000.term",
+      "byte_length": 12,
+      "sha256": "e259de2b9146306ffcbf1dd78f09ca2ce6d81b73133c65bedebbd0f55b64ef35",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-001.term": {
+      "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/regions/region-000/term-001.term",
+      "byte_length": 7,
+      "sha256": "39d031a6c1c196352ec2aea7fb3dc91ff031888b841d140bc400baa403f2d4de",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-000/term-002.term": {
+      "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/regions/region-000/term-002.term",
+      "byte_length": 16,
+      "sha256": "493199ee18651642786ed26ad41200c1b3fea3f8ed9d9ad9b6abe6830fb54eab",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-001/term-000.term": {
+      "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/regions/region-001/term-000.term",
+      "byte_length": 20,
+      "sha256": "86124df520f1b6c2c171483a02ddc29687a15c36f7c05767496a964203df5f44",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-001/term-001.term": {
+      "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/regions/region-001/term-001.term",
+      "byte_length": 7,
+      "sha256": "9c60bc932a19cda85d74a5852c20d89262ecdb0ee2e3c28464fd17df0f885439",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    },
+    "regions/region-001/term-002.term": {
+      "path": "docs/test-corpus/cases/snapshot-long-markers-and-marker-like-content/regions/region-001/term-002.term",
+      "byte_length": 21,
+      "sha256": "0df434e5c723f5c7ea2f14cb1affd3f0cc6bb843c45f6315bf72a85451450ada",
+      "line_ending_mode": "lf",
+      "final_newline": true,
+      "synthetic_separator_eol": false
+    }
+  }
+}

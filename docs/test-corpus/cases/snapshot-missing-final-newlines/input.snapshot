@@ -1,0 +1,20 @@
+line 1
+<<<<<<< conflict 1 of 2
++++++++ side #1
+line 2 left
+------- base
+line 2
++++++++ side #2
+line 2 right
+>>>>>>> conflict 1 of 2 ends
+line 3
+<<<<<<< conflict 2 of 2
++++++++ side #1
+base
+left
+
+------- base (no terminating newline)
+base
++++++++ side #2 (no terminating newline)
+right
+>>>>>>> conflict 2 of 2 ends
