@@ -4,15 +4,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn run(args: &[&str]) -> std::process::Output {
-    let binary = std::env::var_os("CARGO_BIN_EXE_jj_conflict_untangler")
+    let binary = std::env::var_os("CARGO_BIN_EXE_jcw")
         .map(PathBuf::from)
         .or_else(|| {
             std::env::current_exe()
                 .ok()
                 .and_then(|path| path.parent().and_then(Path::parent).map(Path::to_owned))
-                .map(|target_debug| target_debug.join("jj-conflict-untangler"))
+                .map(|target_debug| target_debug.join("jcw"))
         })
-        .expect("Cargo built the jj-conflict-untangler binary");
+        .expect("Cargo built the jcw binary");
     Command::new(binary)
         .args(args)
         .output()
@@ -121,9 +121,9 @@ fn help_succeeds_and_no_command_is_a_stable_error() {
         String::from_utf8_lossy(&help.stdout),
         concat!(
             "Usage:\n",
-            "  jj-conflict-untangler prepare --file FILE [--output-dir DIR]\n",
-            "  jj-conflict-untangler apply --resolved-file FILE [--manifest FILE] [--write]\n",
-            "  jj-conflict-untangler --help\n",
+            "  jcw prepare --file FILE [--output-dir DIR]\n",
+            "  jcw apply --resolved-file FILE [--manifest FILE] [--write]\n",
+            "  jcw --help\n",
         )
     );
     assert_eq!(help.stderr, b"");

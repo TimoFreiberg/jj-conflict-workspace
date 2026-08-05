@@ -2,18 +2,18 @@
 
 ## Prompt
 
-You are implementing the sixth chunk of `jj-conflict-untangler`. Tasks 01–05 established the library contract, pure snapshot core, corpus/property coverage, `prepare`, and pure guarded-apply validation/diff planning. Implement the imperative shell for `apply` now. Do not broaden the parser or turn this into a merge engine.
+You are implementing the sixth chunk of `jj-conflict-workspace`. Tasks 01–05 established the library contract, pure snapshot core, corpus/property coverage, `prepare`, and pure guarded-apply validation/diff planning. Implement the imperative shell for `apply` now. Do not broaden the parser or turn this into a merge engine.
 
 ## Product contract
 
 The agent workflow is:
 
 ```text
-jj-conflict-untangler prepare --file path/to/file
+jcw prepare --file path/to/file
 # edit the ordinary workspace/resolved file
-jj-conflict-untangler apply --resolved-file /absolute/workspace/resolved
+jcw apply --resolved-file /absolute/workspace/resolved
 # dry-run: validate and print proposed diff; source remains unchanged
-jj-conflict-untangler apply --resolved-file /absolute/workspace/resolved --write
+jcw apply --resolved-file /absolute/workspace/resolved --write
 # repeat validation, then install only after all checks pass
 ```
 

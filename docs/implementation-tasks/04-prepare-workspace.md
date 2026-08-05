@@ -2,14 +2,14 @@
 
 ## Prompt
 
-You are implementing the fourth chunk of `jj-conflict-untangler`. Tasks 01–03 established and tested the pure snapshot core. Implement the imperative shell for `prepare`; do not implement guarded source installation yet.
+You are implementing the fourth chunk of `jj-conflict-workspace`. Tasks 01–03 established and tested the pure snapshot core. Implement the imperative shell for `prepare`; do not implement guarded source installation yet.
 
 ## Product contract
 
 `prepare` translates a JJ-conflicted source into an ephemeral workspace for a coding agent without changing the repository. The intended workflow is:
 
 ```text
-jj-conflict-untangler prepare --file path/to/file
+jcw prepare --file path/to/file
 # prints the absolute workspace path
 # workspace contains:
 #   manifest.json

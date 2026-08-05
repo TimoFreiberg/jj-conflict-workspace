@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::error::CliError;
 
-pub const USAGE: &str = "Usage:\n  jj-conflict-untangler prepare --file FILE [--output-dir DIR]\n  jj-conflict-untangler apply --resolved-file FILE [--manifest FILE] [--write]\n  jj-conflict-untangler --help";
+pub const USAGE: &str = "Usage:\n  jcw prepare --file FILE [--output-dir DIR]\n  jcw apply --resolved-file FILE [--manifest FILE] [--write]\n  jcw --help";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrepareOptions {

@@ -2,7 +2,7 @@
 
 ## Prompt
 
-You are implementing the fifth chunk of `jj-conflict-untangler`. Tasks 01–04 provide the domain model, pure parser, tests, and `prepare` artifacts. Implement the pure validation/planning core for `apply`; do not write the repository source or perform atomic replacement yet.
+You are implementing the fifth chunk of `jj-conflict-workspace`. Tasks 01–04 provide the domain model, pure parser, tests, and `prepare` artifacts. Implement the pure validation/planning core for `apply`; do not write the repository source or perform atomic replacement yet.
 
 ## Product contract
 

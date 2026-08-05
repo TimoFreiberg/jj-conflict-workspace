@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "jj-conflict-untangler"
+name = "jj-conflict-workspace"
 version = "0.1.0"

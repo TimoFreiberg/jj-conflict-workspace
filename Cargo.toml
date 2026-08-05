@@ -1,14 +1,14 @@
 [package]
-name = "jj-conflict-untangler"
+name = "jj-conflict-workspace"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "jj_conflict_untangler"
+name = "jj_conflict_workspace"
 path = "src/lib.rs"
 
 [[bin]]
-name = "jj-conflict-untangler"
+name = "jcw"
 path = "src/main.rs"
 
 [dependencies]

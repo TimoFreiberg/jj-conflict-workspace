@@ -2,7 +2,7 @@
 
 ## Prompt
 
-You are implementing the third chunk of `jj-conflict-untangler`. Tasks 01–02 established the Rust core types and pure snapshot parser/materializer. Work primarily on tests and test support. Do not add CLI process execution, tempdir creation, or repository writes here.
+You are implementing the third chunk of `jj-conflict-workspace`. Tasks 01–02 established the Rust core types and pure snapshot parser/materializer. Work primarily on tests and test support. Do not add CLI process execution, tempdir creation, or repository writes here.
 
 ## Why this task exists
 

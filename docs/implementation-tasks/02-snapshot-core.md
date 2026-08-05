@@ -2,7 +2,7 @@
 
 ## Prompt
 
-You are implementing the second chunk of `jj-conflict-untangler`. Task 01 established the Rust domain types and pure-function boundaries. Work on the functional core only: do not invoke `jj`, create tempdirs, parse CLI arguments, or write repository files in this task.
+You are implementing the second chunk of `jj-conflict-workspace`. Task 01 established the Rust domain types and pure-function boundaries. Work on the functional core only: do not invoke `jj`, create tempdirs, parse CLI arguments, or write repository files in this task.
 
 ## Product and format contract
 

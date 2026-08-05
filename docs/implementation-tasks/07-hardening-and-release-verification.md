@@ -2,7 +2,7 @@
 
 ## Prompt
 
-You are implementing the seventh and final chunk of `jj-conflict-untangler`. Tasks 01–06 provide the parser, tests, `prepare`, pure apply validation, dry-run, and guarded atomic installation. Review and harden the complete tool for real coding-agent use. Do not redesign the product or add a merge algorithm.
+You are implementing the seventh and final chunk of `jj-conflict-workspace`. Tasks 01–06 provide the parser, tests, `prepare`, pure apply validation, dry-run, and guarded atomic installation. Review and harden the complete tool for real coding-agent use. Do not redesign the product or add a merge algorithm.
 
 ## Product contract to preserve
 

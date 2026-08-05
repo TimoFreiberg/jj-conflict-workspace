@@ -2,7 +2,7 @@
 
 ## Prompt
 
-You are implementing the first chunk of `jj-conflict-untangler`, a Rust CLI that transports JJ conflict files into agent-editable temporary workspaces. Work only on this task. Do not implement snapshot parsing, `prepare`, or `apply` behavior yet.
+You are implementing the first chunk of `jj-conflict-workspace`, a Rust CLI that transports JJ conflict files into agent-editable temporary workspaces. Work only on this task. Do not implement snapshot parsing, `prepare`, or `apply` behavior yet.
 
 ## Context and non-negotiable product contract
 

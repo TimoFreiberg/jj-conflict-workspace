@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-use jj_conflict_untangler::{CliError, Command, DomainError, USAGE, parse_args};
+use jj_conflict_workspace::{CliError, Command, DomainError, USAGE, parse_args};
 
 fn main() -> ExitCode {
     match parse_args(std::env::args_os().skip(1)) {
