@@ -72,7 +72,9 @@ impl ByteRange {
         if !self.within_source(source.len()) {
             return Err(DomainError::invalid("range exceeds source length"));
         }
-        Ok(&source[self.start..self.end])
+        source
+            .get(self.start..self.end)
+            .ok_or_else(|| DomainError::invalid("range exceeds source length"))
     }
 
     pub(crate) fn require_non_empty(self, what: &str) -> Result<(), DomainError> {

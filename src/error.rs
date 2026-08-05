@@ -1,6 +1,8 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::path_output::encode_path_for_output;
+
 /// Errors raised by the pure domain and validation boundaries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DomainError {
@@ -39,6 +41,13 @@ pub enum DomainError {
         expected: String,
         actual: String,
     },
+    /// The source changed while the external JJ snapshot command was running.
+    SourceChanged {
+        path: PathBuf,
+        phase: &'static str,
+        expected: String,
+        observed: String,
+    },
     /// A resolved change escaped the conflict region that authorized it.
     GuardViolation {
         region_index: usize,
@@ -54,6 +63,14 @@ pub enum DomainError {
     },
     /// A write was refused because it could not meet the safety contract.
     UnsafeWrite { path: PathBuf, message: String },
+    /// The replacement may have committed, so the caller must inspect the source and workspace.
+    InstallationAmbiguous {
+        path: PathBuf,
+        phase: &'static str,
+        workspace: PathBuf,
+        may_have_committed: bool,
+        message: String,
+    },
     /// A foundation boundary exists but its later algorithm is not implemented.
     NotImplemented { operation: &'static str },
 }
@@ -113,7 +130,11 @@ impl fmt::Display for DomainError {
                 "unsupported snapshot style `{style}`; only Snapshot is supported"
             ),
             Self::PathUnavailable { path, message } => {
-                write!(f, "path unavailable `{}`: {message}", path.display())
+                write!(
+                    f,
+                    "path unavailable `{}`: {message}",
+                    encode_path_for_output(path)
+                )
             }
             Self::ExternalCommand {
                 command,
@@ -139,7 +160,7 @@ impl fmt::Display for DomainError {
                     write!(f, " (region {index})")?;
                 }
                 if let Some(path) = path {
-                    write!(f, " (`{}`)", path.display())?;
+                    write!(f, " (`{}`)", encode_path_for_output(path))?;
                 }
                 Ok(())
             }
@@ -165,6 +186,16 @@ impl fmt::Display for DomainError {
                 f,
                 "stale source: {message} (expected {expected}, found {actual})"
             ),
+            Self::SourceChanged {
+                path,
+                phase,
+                expected,
+                observed,
+            } => write!(
+                f,
+                "source changed during JJ ({phase}) for `{}`: expected identity {expected}, observed identity {observed}",
+                encode_path_for_output(path)
+            ),
             Self::GuardViolation {
                 region_index,
                 start,
@@ -185,8 +216,22 @@ impl fmt::Display for DomainError {
             Self::UnsafeWrite { path, message } => write!(
                 f,
                 "unsafe write refused for `{}`: {message}",
-                path.display()
+                encode_path_for_output(path)
             ),
+            Self::InstallationAmbiguous {
+                path,
+                phase,
+                workspace,
+                may_have_committed,
+                message,
+            } => {
+                write!(
+                    f,
+                    "installation ambiguous for `{}` during {phase} (workspace `{}`): {message}; replacement may already be present: {may_have_committed}; inspect the source and workspace rather than assuming the file is unchanged",
+                    encode_path_for_output(path),
+                    encode_path_for_output(workspace),
+                )
+            }
             Self::NotImplemented { operation } => write!(f, "{operation} is not implemented yet"),
         }
     }

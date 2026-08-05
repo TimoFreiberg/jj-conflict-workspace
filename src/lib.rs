@@ -9,7 +9,9 @@ pub mod cli;
 pub mod core;
 pub mod domain;
 pub mod error;
+pub(crate) mod path_output;
 mod prepare;
+pub(crate) mod repository_root;
 
 pub use apply::ApplyReport;
 pub use cli::{ApplyOptions, Command, PrepareOptions, USAGE, parse_args};
@@ -20,6 +22,7 @@ pub use domain::{
     ParsedDocument, Sha256Digest, SnapshotMarker, SnapshotStyle, SourceIdentity, Term, TermKind,
 };
 pub use error::{CliError, DomainError};
+pub use path_output::encode_path_for_output;
 pub use prepare::run as prepare;
 
 #[cfg(test)]
@@ -116,6 +119,16 @@ mod error_tests {
                     operation: "parse_snapshot",
                 },
                 "parse_snapshot is not implemented yet",
+            ),
+            (
+                DomainError::InstallationAmbiguous {
+                    path: PathBuf::from("target"),
+                    phase: "rename",
+                    workspace: PathBuf::from("workspace"),
+                    may_have_committed: true,
+                    message: "inspect manually".into(),
+                },
+                "installation ambiguous for `target` during rename (workspace `workspace`): inspect manually; replacement may already be present: true; inspect the source and workspace rather than assuming the file is unchanged",
             ),
         ];
         for (error, expected) in errors {

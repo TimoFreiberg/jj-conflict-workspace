@@ -3,9 +3,11 @@ use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, Stdio};
+use std::thread;
 #[cfg(not(unix))]
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use crate::cli::PrepareOptions;
 use crate::core::{materialize_scaffold, parse_snapshot};
@@ -13,10 +15,86 @@ use crate::domain::{
     MANIFEST_SCHEMA_VERSION, Manifest, ManifestRegion, ManifestTerm, Sha256Digest, SourceIdentity,
 };
 use crate::error::DomainError;
+use crate::path_output::encode_path_for_output;
+use crate::repository_root::resolve_repository_source;
 
 const JJ_PROGRAM: &str = "jj";
+const JJ_DIAGNOSTIC_LIMIT: usize = 65_536;
 const JJ_CONFIG: &str = "ui.conflict-marker-style=snapshot";
 const WORKSPACE_PREFIX: &str = "jcw-";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileIdentity {
+    file_type: &'static str,
+    len: u64,
+    mode: u32,
+    modified_seconds: i128,
+    modified_nanos: u32,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+impl FileIdentity {
+    fn capture(file: &File, _metadata: &fs::Metadata) -> io::Result<Self> {
+        // Always obtain the fields from the already-open handle. In particular, do
+        // not turn a metadata failure or a pre-epoch timestamp into a sentinel:
+        // that could make a same-byte replacement look unchanged.
+        let metadata = file.metadata()?;
+        let modified = metadata.modified()?;
+        let duration = modified.duration_since(UNIX_EPOCH).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("file modification time predates the Unix epoch: {error}"),
+            )
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            return Ok(Self {
+                file_type: if metadata.file_type().is_file() {
+                    "regular"
+                } else {
+                    "other"
+                },
+                len: metadata.len(),
+                mode: metadata.permissions().mode(),
+                modified_seconds: duration.as_secs() as i128,
+                modified_nanos: duration.subsec_nanos(),
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            });
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(Self {
+                file_type: if metadata.file_type().is_file() {
+                    "regular"
+                } else {
+                    "other"
+                },
+                len: metadata.len(),
+                mode: 0,
+                modified_seconds: duration.as_secs() as i128,
+                modified_nanos: duration.subsec_nanos(),
+            })
+        }
+    }
+}
+
+impl std::fmt::Display for FileIdentity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "type={},len={},mode={:o},mtime={}.{:09}",
+            self.file_type, self.len, self.mode, self.modified_seconds, self.modified_nanos
+        )?;
+        #[cfg(unix)]
+        write!(formatter, ",dev={},ino={}", self.device, self.inode)?;
+        Ok(())
+    }
+}
 
 #[derive(Debug)]
 struct SourceContext {
@@ -24,6 +102,7 @@ struct SourceContext {
     repository_root: PathBuf,
     repository_relative: PathBuf,
     original: Vec<u8>,
+    identity: FileIdentity,
 }
 
 /// Prepare a source file into a private, persistent workspace.
@@ -31,12 +110,35 @@ struct SourceContext {
 /// The child process invocation is intentionally kept here, at the imperative
 /// boundary. The parser and scaffold materializer remain pure functions.
 pub fn run(options: &PrepareOptions) -> Result<PathBuf, DomainError> {
+    let mut writer = RealWorkspaceWriter;
+    run_with_writer_impl(options, &mut writer, invoke_jj)
+}
+
+fn run_with_writer_impl<W, F>(
+    options: &PrepareOptions,
+    writer: &mut W,
+    invoke_snapshot: F,
+) -> Result<PathBuf, DomainError>
+where
+    W: WorkspaceWriter,
+    F: FnOnce(&SourceContext) -> Result<Vec<u8>, DomainError>,
+{
     let source = validate_source(&options.file)?;
-    let snapshot = invoke_jj(&source)?;
+    let snapshot = invoke_snapshot(&source)?;
+    let (current_bytes, current_identity) = read_source_securely(&source.canonical_source)
+        .map_err(|error| path_error(&source.canonical_source, error))?;
+    if current_bytes != source.original || current_identity != source.identity {
+        return Err(DomainError::SourceChanged {
+            path: source.canonical_source.clone(),
+            phase: "after-jj",
+            expected: source.identity.to_string(),
+            observed: current_identity.to_string(),
+        });
+    }
     let document = parse_snapshot(&snapshot).map_err(|error| {
         DomainError::invalid(format!(
             "JJ snapshot output for `{}` could not be parsed: {error}",
-            source.repository_relative.display()
+            encode_path_for_output(&source.repository_relative)
         ))
     })?;
     let resolved = materialize_scaffold(&document).map_err(|error| {
@@ -46,8 +148,20 @@ pub fn run(options: &PrepareOptions) -> Result<PathBuf, DomainError> {
     })?;
 
     let manifest = make_manifest(&source, &document)?;
-    let workspace = create_workspace(options.output_dir.as_deref())?;
+    let workspace = match writer.create_workspace(options.output_dir.as_deref()) {
+        Ok(workspace) => workspace,
+        Err(mut error) => {
+            // A writer can fail after creating the workspace directory (for
+            // example, while restricting its permissions).  In that case the
+            // caller still owns cleanup and must report its result.
+            if let Some(workspace) = error.partial_workspace.take() {
+                return Err(cleanup_failed_workspace(writer, workspace, error));
+            }
+            return Err(workspace_failure_error(error));
+        }
+    };
     match write_workspace(
+        writer,
         &workspace,
         &source.original,
         &document,
@@ -55,8 +169,23 @@ pub fn run(options: &PrepareOptions) -> Result<PathBuf, DomainError> {
         &manifest,
     ) {
         Ok(()) => Ok(workspace),
-        Err(error) => Err(cleanup_failed_workspace(workspace, error)),
+        Err(error) => Err(cleanup_failed_workspace(writer, workspace, error)),
     }
+}
+
+/// Test-only prepare boundary. The injected snapshot runner avoids changing PATH
+/// or starting a child process, while the writer remains private to this module.
+#[cfg(test)]
+fn run_with_writer<W, F>(
+    options: &PrepareOptions,
+    writer: &mut W,
+    invoke_snapshot: F,
+) -> Result<PathBuf, DomainError>
+where
+    W: WorkspaceWriter,
+    F: FnOnce(&SourceContext) -> Result<Vec<u8>, DomainError>,
+{
+    run_with_writer_impl(options, writer, invoke_snapshot)
 }
 
 fn validate_source(path: &Path) -> Result<SourceContext, DomainError> {
@@ -68,54 +197,57 @@ fn validate_source(path: &Path) -> Result<SourceContext, DomainError> {
         });
     }
 
-    let current_dir = std::env::current_dir().map_err(|error| DomainError::PathUnavailable {
-        path: path.to_owned(),
-        message: format!("could not determine the current directory: {error}"),
-    })?;
-    let current_dir =
-        fs::canonicalize(&current_dir).map_err(|error| path_error(&current_dir, error))?;
-    let repository_root =
-        find_repository_root(&current_dir).ok_or_else(|| DomainError::PathUnavailable {
-            path: path.to_owned(),
-            message: "the current directory is not inside a JJ repository".into(),
-        })?;
-    let canonical_source = fs::canonicalize(path).map_err(|error| path_error(path, error))?;
-    let repository_relative = canonical_source
-        .strip_prefix(&repository_root)
-        .map_err(|_| DomainError::PathUnavailable {
-            path: path.to_owned(),
-            message: format!(
-                "the canonical source `{}` is outside repository `{}`",
-                canonical_source.display(),
-                repository_root.display()
-            ),
-        })?
-        .to_owned();
-
-    validate_relative_path(&repository_relative, path)?;
-    let original = fs::read(&canonical_source).map_err(|error| path_error(path, error))?;
+    let resolved = resolve_repository_source(path).map_err(|error| path_error(path, error))?;
+    validate_relative_path(&resolved.repository_relative, path)?;
+    let (original, identity) = read_source_securely(&resolved.canonical_source)
+        .map_err(|error| path_error(path, error))?;
 
     Ok(SourceContext {
-        canonical_source,
-        repository_root,
-        repository_relative,
+        canonical_source: resolved.canonical_source,
+        repository_root: resolved.repository_root,
+        repository_relative: resolved.repository_relative,
         original,
+        identity,
     })
 }
 
-fn find_repository_root(start: &Path) -> Option<PathBuf> {
-    let mut candidate = Some(start);
-    while let Some(path) = candidate {
-        let jj_dir = path.join(".jj");
-        if fs::symlink_metadata(&jj_dir)
-            .map(|metadata| metadata.file_type().is_dir())
-            .unwrap_or(false)
-        {
-            return Some(path.to_owned());
-        }
-        candidate = path.parent();
+fn read_source_securely(path: &Path) -> io::Result<(Vec<u8>, FileIdentity)> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(all(unix, target_os = "linux"))]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(0x0004_0000);
     }
-    None
+    #[cfg(all(unix, target_os = "android"))]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(0x0004_0000);
+    }
+    #[cfg(all(unix, target_os = "macos"))]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(0x0000_0100);
+    }
+    let mut file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.file_type().is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "source is not a regular file",
+        ));
+    }
+    let identity = FileIdentity::capture(&file, &metadata)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let observed = FileIdentity::capture(&file, &file.metadata()?)?;
+    if observed != identity {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "source changed while it was being read",
+        ));
+    }
+    Ok((bytes, identity))
 }
 
 fn validate_relative_path(path: &Path, original: &Path) -> Result<(), DomainError> {
@@ -149,40 +281,204 @@ fn invoke_jj(source: &SourceContext) -> Result<Vec<u8>, DomainError> {
         .arg("@")
         .arg("--")
         .arg(&source.repository_relative)
-        .current_dir(&source.repository_root);
+        .current_dir(&source.repository_root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     let description = format_command(&source.repository_relative);
-    let output = command
-        .output()
+    let mut child = command
+        .spawn()
         .map_err(|error| DomainError::ExternalCommand {
             command: description.clone(),
             status: None,
             stderr: format!("could not start JJ: {error}"),
         })?;
-    if !output.status.success() {
+    let stdout_reader = drain_pipe(child.stdout.take());
+    let stderr_reader = drain_bounded_pipe(child.stderr.take(), JJ_DIAGNOSTIC_LIMIT);
+    let status = child.wait().map_err(|error| DomainError::ExternalCommand {
+        command: description.clone(),
+        status: None,
+        stderr: format!("could not wait for JJ: {error}"),
+    })?;
+    let stdout = join_pipe(stdout_reader, &description)?;
+    let stderr = join_bounded_pipe(stderr_reader, &description)?;
+    if !status.success() {
         return Err(DomainError::ExternalCommand {
             command: description,
-            status: output.status.code(),
-            stderr: command_diagnostics(&output.stderr),
+            status: status.code(),
+            stderr: command_diagnostics(&stderr),
         });
     }
-    Ok(output.stdout)
+    Ok(stdout)
+}
+
+fn drain_pipe<R>(reader: Option<R>) -> thread::JoinHandle<io::Result<Vec<u8>>>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut reader) = reader {
+            reader.read_to_end(&mut bytes)?;
+        }
+        Ok(bytes)
+    })
+}
+
+fn drain_bounded_pipe<R>(
+    reader: Option<R>,
+    limit: usize,
+) -> thread::JoinHandle<io::Result<BoundedBytes>>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut retained = Vec::new();
+        let mut total = 0usize;
+        let mut buffer = [0u8; 8192];
+        if let Some(mut reader) = reader {
+            loop {
+                let count = reader.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                total = total.saturating_add(count);
+                let remaining = limit.saturating_sub(retained.len());
+                if remaining > 0 {
+                    retained.extend_from_slice(&buffer[..count.min(remaining)]);
+                }
+            }
+        }
+        Ok(BoundedBytes {
+            bytes: retained,
+            total,
+        })
+    })
+}
+
+#[derive(Debug)]
+struct BoundedBytes {
+    bytes: Vec<u8>,
+    total: usize,
+}
+
+fn join_pipe(
+    reader: thread::JoinHandle<io::Result<Vec<u8>>>,
+    command: &str,
+) -> Result<Vec<u8>, DomainError> {
+    match reader.join() {
+        Ok(result) => result.map_err(|error| DomainError::ExternalCommand {
+            command: command.to_owned(),
+            status: None,
+            stderr: format!("could not drain JJ output: {error}"),
+        }),
+        Err(_) => Err(DomainError::ExternalCommand {
+            command: command.to_owned(),
+            status: None,
+            stderr: "could not drain JJ output: reader thread panicked".into(),
+        }),
+    }
+}
+
+fn join_bounded_pipe(
+    reader: thread::JoinHandle<io::Result<BoundedBytes>>,
+    command: &str,
+) -> Result<Vec<u8>, DomainError> {
+    match reader.join() {
+        Ok(result) => result
+            .map(|output| {
+                render_bounded_jj_stderr(&output.bytes, output.total > JJ_DIAGNOSTIC_LIMIT)
+                    .into_bytes()
+            })
+            .map_err(|error| DomainError::ExternalCommand {
+                command: command.to_owned(),
+                status: None,
+                stderr: format!("could not drain JJ output: {error}"),
+            }),
+        Err(_) => Err(DomainError::ExternalCommand {
+            command: command.to_owned(),
+            status: None,
+            stderr: "could not drain JJ output: reader thread panicked".into(),
+        }),
+    }
 }
 
 fn format_command(path: &Path) -> String {
     format!(
         "jj --no-pager --config {JJ_CONFIG} file show --revision @ -- {}",
-        display_os(path.as_os_str())
+        encode_path_for_output(path)
     )
 }
 
 fn command_diagnostics(bytes: &[u8]) -> String {
-    let diagnostics = String::from_utf8_lossy(bytes).trim().to_owned();
-    if diagnostics.is_empty() {
-        "no diagnostics were emitted".into()
-    } else {
-        diagnostics
+    match std::str::from_utf8(bytes) {
+        Ok(diagnostics) if !diagnostics.is_empty() => diagnostics.to_owned(),
+        Ok(_) => "no diagnostics were emitted".into(),
+        Err(_) => "JJ diagnostics could not be rendered".into(),
     }
+}
+
+/// Render JJ stderr without lossy replacement or unbounded diagnostics.
+fn render_bounded_jj_stderr(bytes: &[u8], truncated: bool) -> String {
+    const MARKER: &str = "...[truncated]";
+    let raw_len_exceeded = truncated;
+    let mut rendered = String::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        match std::str::from_utf8(&bytes[index..]) {
+            Ok(text) => {
+                rendered.push_str(text);
+                break;
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                if valid > 0 {
+                    if let Some(text) = std::str::from_utf8(&bytes[index..index + valid]).ok() {
+                        rendered.push_str(text);
+                        index += valid;
+                    } else {
+                        push_byte_escape(&mut rendered, bytes[index]);
+                        index += 1;
+                    }
+                } else {
+                    push_byte_escape(&mut rendered, bytes[index]);
+                    index += 1;
+                }
+            }
+        }
+    }
+    if rendered.ends_with("\r\n") {
+        rendered.truncate(rendered.len() - 2);
+    } else if rendered.ends_with('\r') || rendered.ends_with('\n') {
+        rendered.pop();
+    }
+
+    if !raw_len_exceeded && rendered.len() <= JJ_DIAGNOSTIC_LIMIT {
+        return rendered;
+    }
+    let prefix_limit = JJ_DIAGNOSTIC_LIMIT - MARKER.len();
+    let mut prefix_len = rendered.len().min(prefix_limit);
+    while prefix_len > 0 && !rendered.is_char_boundary(prefix_len) {
+        prefix_len -= 1;
+    }
+    if prefix_len > 0 && rendered.as_bytes()[prefix_len - 1] == b'%' {
+        prefix_len -= 1;
+    } else if prefix_len >= 2 && rendered.as_bytes()[prefix_len - 2] == b'%' {
+        prefix_len -= 2;
+    }
+    let mut output = rendered;
+    output.truncate(prefix_len);
+    output.push_str(MARKER);
+    debug_assert!(output.len() <= JJ_DIAGNOSTIC_LIMIT);
+    debug_assert_eq!(output.matches(MARKER).count(), 1);
+    output
+}
+
+fn push_byte_escape(output: &mut String, byte: u8) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    output.push('%');
+    output.push(HEX[(byte >> 4) as usize] as char);
+    output.push(HEX[(byte & 0x0f) as usize] as char);
 }
 
 fn make_manifest(
@@ -220,38 +516,157 @@ fn make_manifest(
     )
 }
 
-fn create_workspace(output_dir: Option<&Path>) -> Result<PathBuf, DomainError> {
-    let parent = workspace_parent(output_dir)?;
-    for attempt in 0..32u32 {
-        let suffix = secure_suffix(attempt).map_err(|error| DomainError::PathUnavailable {
-            path: parent.clone(),
-            message: format!("could not obtain secure workspace randomness: {error}"),
+#[derive(Debug)]
+struct WorkspaceWriteError {
+    path: PathBuf,
+    operation: &'static str,
+    phase: &'static str,
+    source: io::Error,
+    /// Set when the operation failed after creating the workspace directory.
+    /// The caller must attempt cleanup and report whether it succeeded.
+    partial_workspace: Option<PathBuf>,
+}
+
+fn workspace_write_error(
+    path: &Path,
+    operation: &'static str,
+    phase: &'static str,
+    source: io::Error,
+) -> WorkspaceWriteError {
+    WorkspaceWriteError {
+        path: path.to_owned(),
+        operation,
+        phase,
+        source,
+        partial_workspace: None,
+    }
+}
+
+fn workspace_write_error_after_creation(
+    workspace: &Path,
+    path: &Path,
+    operation: &'static str,
+    phase: &'static str,
+    source: io::Error,
+) -> WorkspaceWriteError {
+    let mut error = workspace_write_error(path, operation, phase, source);
+    error.partial_workspace = Some(workspace.to_owned());
+    error
+}
+
+fn workspace_write_error_message(error: &WorkspaceWriteError) -> String {
+    format!(
+        "operation `{}` failed during phase `{}` for `{}`: {}",
+        error.operation,
+        error.phase,
+        encode_path_for_output(&error.path),
+        error.source
+    )
+}
+
+trait WorkspaceWriter {
+    fn create_workspace(
+        &mut self,
+        output_dir: Option<&Path>,
+    ) -> Result<PathBuf, WorkspaceWriteError>;
+    fn create_private_directory(&mut self, path: &Path) -> Result<(), WorkspaceWriteError>;
+    fn write_exclusive(&mut self, path: &Path, bytes: &[u8]) -> Result<(), WorkspaceWriteError>;
+    fn cleanup_workspace(&mut self, workspace: &Path) -> Result<(), WorkspaceWriteError>;
+}
+
+struct RealWorkspaceWriter;
+
+impl WorkspaceWriter for RealWorkspaceWriter {
+    fn create_workspace(
+        &mut self,
+        output_dir: Option<&Path>,
+    ) -> Result<PathBuf, WorkspaceWriteError> {
+        let parent = workspace_parent(output_dir).map_err(|error| match error {
+            DomainError::PathUnavailable { path, message } => workspace_write_error(
+                &path,
+                "create workspace",
+                "prepare parent",
+                io::Error::new(io::ErrorKind::Other, message),
+            ),
+            other => workspace_write_error(
+                output_dir.unwrap_or_else(|| Path::new(".")),
+                "create workspace",
+                "prepare parent",
+                io::Error::new(io::ErrorKind::Other, other.to_string()),
+            ),
         })?;
-        let workspace = parent.join(format!("{WORKSPACE_PREFIX}{suffix}"));
-        match fs::create_dir(&workspace) {
-            Ok(()) => {
-                if let Err(error) = restrict_directory(&workspace) {
-                    let _ = fs::remove_dir(&workspace);
-                    return Err(DomainError::PathUnavailable {
-                        path: workspace,
-                        message: format!("could not restrict workspace permissions: {error}"),
-                    });
+        for attempt in 0..32u32 {
+            let suffix = secure_suffix(attempt).map_err(|error| {
+                workspace_write_error(&parent, "create workspace", "secure randomness", error)
+            })?;
+            let workspace = parent.join(format!("{WORKSPACE_PREFIX}{suffix}"));
+            match fs::create_dir(&workspace) {
+                Ok(()) => {
+                    if let Err(error) = restrict_directory(&workspace) {
+                        return Err(workspace_write_error_after_creation(
+                            &workspace,
+                            &workspace,
+                            "create workspace",
+                            "restrict permissions",
+                            error,
+                        ));
+                    }
+                    return Ok(workspace);
                 }
-                return Ok(workspace);
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(DomainError::PathUnavailable {
-                    path: workspace,
-                    message: format!("could not create private workspace: {error}"),
-                });
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(workspace_write_error(
+                        &workspace,
+                        "create workspace",
+                        "create directory",
+                        error,
+                    ));
+                }
             }
         }
+        Err(workspace_write_error(
+            &parent,
+            "create workspace",
+            "choose unique name",
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "could not find an unused secure workspace name after 32 attempts",
+            ),
+        ))
     }
-    Err(DomainError::PathUnavailable {
-        path: parent,
-        message: "could not find an unused secure workspace name after 32 attempts".into(),
-    })
+
+    fn create_private_directory(&mut self, path: &Path) -> Result<(), WorkspaceWriteError> {
+        fs::create_dir(path).map_err(|error| {
+            workspace_write_error(path, "create directory", "create directory", error)
+        })?;
+        restrict_directory(path).map_err(|error| {
+            workspace_write_error(path, "create directory", "restrict permissions", error)
+        })
+    }
+
+    fn write_exclusive(&mut self, path: &Path, bytes: &[u8]) -> Result<(), WorkspaceWriteError> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|error| {
+                workspace_write_error(path, "write artifact", "exclusive-create", error)
+            })?;
+        restrict_file(&file, path).map_err(|error| {
+            workspace_write_error(path, "write artifact", "restrict permissions", error)
+        })?;
+        file.write_all(bytes).map_err(|error| {
+            workspace_write_error(path, "write artifact", "complete-write", error)
+        })?;
+        file.sync_all()
+            .map_err(|error| workspace_write_error(path, "write artifact", "sync", error))
+    }
+
+    fn cleanup_workspace(&mut self, workspace: &Path) -> Result<(), WorkspaceWriteError> {
+        fs::remove_dir_all(workspace).map_err(|error| {
+            workspace_write_error(workspace, "cleanup workspace", "cleanup", error)
+        })
+    }
 }
 
 fn workspace_parent(output_dir: Option<&Path>) -> Result<PathBuf, DomainError> {
@@ -267,16 +682,21 @@ fn workspace_parent(output_dir: Option<&Path>) -> Result<PathBuf, DomainError> {
                     })?
                     .join(path)
             };
-            if let Ok(metadata) = fs::symlink_metadata(&path) {
-                if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
-                    return Err(DomainError::PathUnavailable {
-                        path,
-                        message: "output directory must be a real directory, not a symlink or file"
-                            .into(),
-                    });
+            match fs::symlink_metadata(&path) {
+                Ok(metadata) => {
+                    if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+                        return Err(DomainError::PathUnavailable {
+                            path,
+                            message:
+                                "output directory must be a real directory, not a symlink or file"
+                                    .into(),
+                        });
+                    }
                 }
-            } else {
-                fs::create_dir_all(&path).map_err(|error| path_error(&path, error))?;
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    fs::create_dir_all(&path).map_err(|error| path_error(&path, error))?;
+                }
+                Err(error) => return Err(path_error(&path, error)),
             }
             path
         }
@@ -311,54 +731,66 @@ fn secure_suffix(_attempt: u32) -> io::Result<String> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-fn write_workspace(
+fn write_workspace<W: WorkspaceWriter>(
+    writer: &mut W,
     workspace: &Path,
     source: &[u8],
     document: &crate::domain::ParsedDocument,
     resolved: &[u8],
     manifest: &Manifest,
-) -> io::Result<()> {
-    manifest
-        .validate()
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
-    write_exclusive(&workspace.join("source"), source)?;
+) -> Result<(), WorkspaceWriteError> {
+    manifest.validate().map_err(|error| {
+        workspace_write_error(
+            &workspace.join("manifest.json"),
+            "validate manifest",
+            "validate manifest",
+            io::Error::new(io::ErrorKind::InvalidData, error.to_string()),
+        )
+    })?;
+    writer.write_exclusive(&workspace.join("source"), source)?;
     let regions = workspace.join("regions");
-    create_private_directory(&regions)?;
+    writer.create_private_directory(&regions)?;
     for (region_index, region) in document.regions.iter().enumerate() {
         let region_dir = regions.join(format!("region-{region_index:03}"));
-        create_private_directory(&region_dir)?;
+        writer.create_private_directory(&region_dir)?;
         for term in &region.terms {
             let artifact = region_dir.join(format!("term-{:03}.term", term.ordinal));
-            write_exclusive(&artifact, &term.logical_bytes)?;
+            writer.write_exclusive(&artifact, &term.logical_bytes)?;
         }
     }
-    write_exclusive(&workspace.join("resolved"), resolved)?;
-    write_exclusive(&workspace.join("manifest.json"), &manifest_json(manifest))?;
+    writer.write_exclusive(&workspace.join("resolved"), resolved)?;
+    writer.write_exclusive(&workspace.join("manifest.json"), &manifest_json(manifest))?;
     Ok(())
 }
 
-fn create_private_directory(path: &Path) -> io::Result<()> {
-    fs::create_dir(path)?;
-    restrict_directory(path)
+fn workspace_failure_error(error: WorkspaceWriteError) -> DomainError {
+    DomainError::PathUnavailable {
+        path: error.path.clone(),
+        message: workspace_write_error_message(&error),
+    }
 }
 
-fn write_exclusive(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
-    restrict_file(&file, path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
-}
-
-fn cleanup_failed_workspace(workspace: PathBuf, error: io::Error) -> DomainError {
-    match fs::remove_dir_all(&workspace) {
+fn cleanup_failed_workspace<W: WorkspaceWriter>(
+    writer: &mut W,
+    workspace: PathBuf,
+    error: WorkspaceWriteError,
+) -> DomainError {
+    let error_path = error.path.clone();
+    let error_message = workspace_write_error_message(&error);
+    match writer.cleanup_workspace(&workspace) {
         Ok(()) => DomainError::PathUnavailable {
-            path: workspace,
-            message: format!("could not complete workspace artifacts: {error}; cleanup completed"),
+            path: error_path,
+            message: format!(
+                "could not complete workspace artifacts: {error_message}; cleanup completed"
+            ),
         },
         Err(cleanup_error) => DomainError::PathUnavailable {
-            path: workspace,
+            path: error_path,
             message: format!(
-                "could not complete workspace artifacts: {error}; cleanup failed: {cleanup_error}; inspect the retained partial workspace"
+                "could not complete workspace artifacts: {error_message}; cleanup failed during phase `{}` for `{}`: {}; inspect the retained partial workspace",
+                cleanup_error.phase,
+                encode_path_for_output(&cleanup_error.path),
+                cleanup_error.source
             ),
         },
     }
@@ -491,10 +923,6 @@ fn os_bytes(value: &OsStr) -> Vec<u8> {
 #[cfg(not(unix))]
 fn os_bytes(value: &OsStr) -> Vec<u8> {
     value.to_string_lossy().as_bytes().to_vec()
-}
-
-fn display_os(value: &OsStr) -> String {
-    value.to_string_lossy().into_owned()
 }
 
 #[cfg(unix)]
@@ -652,5 +1080,301 @@ mod tests {
         assert!(json.contains("regions/region-000/term-000.term"));
         assert!(json.contains("side \\\"one\\\""));
         assert!(json.contains("\"logical_length\": 0"));
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum InjectedFailure {
+        CreateWorkspace,
+        CreateDirectory,
+        ExclusiveCreate,
+        CompleteWrite,
+        Sync,
+        Cleanup,
+    }
+
+    struct FaultWriter {
+        root: PathBuf,
+        failure: InjectedFailure,
+        cleanup_failure: bool,
+        failed: bool,
+    }
+
+    impl FaultWriter {
+        fn new(root: PathBuf, failure: InjectedFailure, cleanup_failure: bool) -> Self {
+            Self {
+                root,
+                failure,
+                cleanup_failure,
+                failed: false,
+            }
+        }
+
+        fn should_fail(&mut self, failure: InjectedFailure) -> bool {
+            if !self.failed && self.failure == failure {
+                self.failed = true;
+                true
+            } else {
+                false
+            }
+        }
+
+        fn injected_error(
+            path: &Path,
+            operation: &'static str,
+            phase: &'static str,
+        ) -> WorkspaceWriteError {
+            workspace_write_error(
+                path,
+                operation,
+                phase,
+                io::Error::new(io::ErrorKind::Other, "injected failure"),
+            )
+        }
+    }
+
+    impl WorkspaceWriter for FaultWriter {
+        fn create_workspace(
+            &mut self,
+            _output_dir: Option<&Path>,
+        ) -> Result<PathBuf, WorkspaceWriteError> {
+            let workspace = self.root.join("jcw-injected");
+            if self.should_fail(InjectedFailure::CreateWorkspace) {
+                return Err(Self::injected_error(
+                    &workspace,
+                    "create workspace",
+                    "create directory",
+                ));
+            }
+            fs::create_dir(&workspace).map_err(|error| {
+                workspace_write_error(&workspace, "create workspace", "create directory", error)
+            })?;
+            restrict_directory(&workspace).map_err(|error| {
+                workspace_write_error_after_creation(
+                    &workspace,
+                    &workspace,
+                    "create workspace",
+                    "restrict permissions",
+                    error,
+                )
+            })?;
+            Ok(workspace)
+        }
+
+        fn create_private_directory(&mut self, path: &Path) -> Result<(), WorkspaceWriteError> {
+            if self.should_fail(InjectedFailure::CreateDirectory) {
+                return Err(Self::injected_error(
+                    path,
+                    "create directory",
+                    "create directory",
+                ));
+            }
+            fs::create_dir(path).map_err(|error| {
+                workspace_write_error(path, "create directory", "create directory", error)
+            })?;
+            restrict_directory(path).map_err(|error| {
+                workspace_write_error(path, "create directory", "restrict permissions", error)
+            })
+        }
+
+        fn write_exclusive(
+            &mut self,
+            path: &Path,
+            bytes: &[u8],
+        ) -> Result<(), WorkspaceWriteError> {
+            if self.should_fail(InjectedFailure::ExclusiveCreate) {
+                return Err(Self::injected_error(
+                    path,
+                    "write artifact",
+                    "exclusive-create",
+                ));
+            }
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .map_err(|error| {
+                    workspace_write_error(path, "write artifact", "exclusive-create", error)
+                })?;
+            restrict_file(&file, path).map_err(|error| {
+                workspace_write_error(path, "write artifact", "restrict permissions", error)
+            })?;
+            if self.should_fail(InjectedFailure::CompleteWrite) {
+                return Err(Self::injected_error(
+                    path,
+                    "write artifact",
+                    "complete-write",
+                ));
+            }
+            file.write_all(bytes).map_err(|error| {
+                workspace_write_error(path, "write artifact", "complete-write", error)
+            })?;
+            if self.should_fail(InjectedFailure::Sync) {
+                return Err(Self::injected_error(path, "write artifact", "sync"));
+            }
+            file.sync_all()
+                .map_err(|error| workspace_write_error(path, "write artifact", "sync", error))
+        }
+
+        fn cleanup_workspace(&mut self, workspace: &Path) -> Result<(), WorkspaceWriteError> {
+            if self.cleanup_failure || self.should_fail(InjectedFailure::Cleanup) {
+                return Err(Self::injected_error(
+                    workspace,
+                    "cleanup workspace",
+                    "cleanup",
+                ));
+            }
+            fs::remove_dir_all(workspace).map_err(|error| {
+                workspace_write_error(workspace, "cleanup workspace", "cleanup", error)
+            })
+        }
+    }
+
+    fn minimal_snapshot(_source: &SourceContext) -> Result<Vec<u8>, DomainError> {
+        Ok(b"<<<<<<< opening\n+++++++ side\nside\n------- base\nbase\n>>>>>>> closing\n".to_vec())
+    }
+
+    fn writer_test_fixture(name: &str) -> (tempfile::TempDir, PrepareOptions) {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repo");
+        fs::create_dir(&repository).unwrap();
+        fs::create_dir(repository.join(".jj")).unwrap();
+        let source = repository.join("source");
+        fs::write(&source, vec![b'x'; 1024]).unwrap();
+        let output = temporary.path().join(name);
+        fs::create_dir(&output).unwrap();
+        (
+            temporary,
+            PrepareOptions {
+                file: source,
+                output_dir: Some(output),
+            },
+        )
+    }
+
+    #[test]
+    fn workspace_writer_reports_each_operation_and_cleanup_status() {
+        let failures = [
+            (
+                InjectedFailure::CreateWorkspace,
+                "create workspace",
+                "create directory",
+            ),
+            (
+                InjectedFailure::CreateDirectory,
+                "create directory",
+                "create directory",
+            ),
+            (
+                InjectedFailure::ExclusiveCreate,
+                "write artifact",
+                "exclusive-create",
+            ),
+            (
+                InjectedFailure::CompleteWrite,
+                "write artifact",
+                "complete-write",
+            ),
+            (InjectedFailure::Sync, "write artifact", "sync"),
+        ];
+        for (failure, operation, phase) in failures {
+            let (temporary, options) = writer_test_fixture("output");
+            let before = fs::read(&options.file).unwrap();
+            let mut writer = FaultWriter::new(options.output_dir.clone().unwrap(), failure, false);
+            let error = run_with_writer(&options, &mut writer, minimal_snapshot).unwrap_err();
+            let rendered = error.to_string();
+            assert!(rendered.contains(operation), "{rendered}");
+            assert!(rendered.contains(phase), "{rendered}");
+            if failure != InjectedFailure::CreateWorkspace {
+                assert!(rendered.contains("cleanup completed"), "{rendered}");
+            }
+            assert_eq!(fs::read(&options.file).unwrap(), before);
+            drop(temporary);
+        }
+
+        let (temporary, options) = writer_test_fixture("retained-output");
+        let mut writer = FaultWriter::new(
+            options.output_dir.clone().unwrap(),
+            InjectedFailure::CompleteWrite,
+            true,
+        );
+        let error = run_with_writer(&options, &mut writer, minimal_snapshot).unwrap_err();
+        let rendered = error.to_string();
+        assert!(rendered.contains("complete-write"), "{rendered}");
+        assert!(rendered.contains("cleanup failed"), "{rendered}");
+        assert!(
+            rendered.contains("retained partial workspace"),
+            "{rendered}"
+        );
+        assert!(
+            options
+                .output_dir
+                .as_ref()
+                .unwrap()
+                .join("jcw-injected")
+                .exists()
+        );
+        drop(temporary);
+    }
+
+    #[test]
+    fn file_identity_capture_uses_open_handle_metadata() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("source");
+        fs::write(&path, b"bytes").unwrap();
+        let file = File::open(&path).unwrap();
+        let metadata = file.metadata().unwrap();
+
+        // `capture` obtains identity fields from the already-open handle.  The
+        // test asserts the observable contract without pretending that a
+        // pre-epoch `Metadata` value can be fabricated portably.
+        let identity = FileIdentity::capture(&file, &metadata).unwrap();
+        assert_eq!(identity.file_type, "regular");
+        assert_eq!(identity.len, 5);
+        assert!(identity.modified_seconds >= 0);
+    }
+
+    #[test]
+    fn render_bounded_jj_stderr_is_byte_bounded_and_escapes_invalid_bytes() {
+        let exact = vec![b'a'; JJ_DIAGNOSTIC_LIMIT];
+        let rendered = render_bounded_jj_stderr(&exact, false);
+        assert_eq!(rendered.len(), JJ_DIAGNOSTIC_LIMIT);
+        assert!(!rendered.contains("...[truncated]"));
+
+        let oversized = vec![b'b'; JJ_DIAGNOSTIC_LIMIT + 1];
+        let rendered = render_bounded_jj_stderr(&oversized, true);
+        assert_eq!(rendered.len(), JJ_DIAGNOSTIC_LIMIT);
+        assert_eq!(rendered.matches("...[truncated]").count(), 1);
+
+        let invalid = render_bounded_jj_stderr(b"bad\xff\xfe\r\n", false);
+        assert_eq!(invalid, "bad%FF%FE");
+    }
+
+    #[test]
+    fn render_bounded_jj_stderr_handles_near_limit_all_invalid_bytes() {
+        let input = vec![0xff; JJ_DIAGNOSTIC_LIMIT / 3 + 1];
+        let rendered = render_bounded_jj_stderr(&input, false);
+        // The marker leaves 65,522 bytes for the prefix.  Since each invalid
+        // byte expands to a complete three-byte escape, two bytes necessarily
+        // remain unavailable; never pad with a partial escape or synthetic data.
+        assert_eq!(rendered.len(), JJ_DIAGNOSTIC_LIMIT - 2);
+        assert_eq!(rendered.matches("...[truncated]").count(), 1);
+        assert!(rendered.starts_with("%FF%FF"));
+        assert_eq!(
+            rendered[..rendered.len() - "...[truncated]".len()].len() % 3,
+            0
+        );
+    }
+
+    #[test]
+    fn render_bounded_jj_stderr_marks_rendered_overflow_below_raw_limit() {
+        let raw_len = JJ_DIAGNOSTIC_LIMIT / 3 + 1;
+        let input = vec![0xfe; raw_len];
+        let rendered = render_bounded_jj_stderr(&input, false);
+        assert!(raw_len < JJ_DIAGNOSTIC_LIMIT);
+        assert_eq!(rendered.len(), JJ_DIAGNOSTIC_LIMIT - 2);
+        assert_eq!(rendered.matches("...[truncated]").count(), 1);
+        let prefix = &rendered[..rendered.len() - "...[truncated]".len()];
+        assert_eq!(prefix.len() % 3, 0);
+        assert!(!prefix.ends_with('%'));
     }
 }

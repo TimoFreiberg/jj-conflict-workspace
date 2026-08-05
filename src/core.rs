@@ -44,12 +44,12 @@ fn scan_lines(input: &[u8]) -> Vec<Line> {
 
     while start < input.len() {
         let mut cursor = start;
-        while cursor < input.len() && input[cursor] != b'\n' {
-            cursor += 1;
+        while cursor < input.len() && input.get(cursor).copied() != Some(b'\n') {
+            cursor = cursor.saturating_add(1);
         }
 
         let (full_end, content_end, eol_len) = if cursor < input.len() {
-            let content_end = if cursor > start && input[cursor - 1] == b'\r' {
+            let content_end = if cursor > start && input.get(cursor - 1).copied() == Some(b'\r') {
                 cursor - 1
             } else {
                 cursor
@@ -78,13 +78,13 @@ fn scan_lines(input: &[u8]) -> Vec<Line> {
 
 fn marker_run(input: &[u8], line: Line, marker: u8) -> Option<MarkerRun> {
     let start = line.content.start;
-    if start >= line.content.end || input[start] != marker {
+    if start >= line.content.end || input.get(start).copied() != Some(marker) {
         return None;
     }
 
-    let mut after_run = start + 1;
-    while after_run < line.content.end && input[after_run] == marker {
-        after_run += 1;
+    let mut after_run = start.checked_add(1)?;
+    while after_run < line.content.end && input.get(after_run).copied() == Some(marker) {
+        after_run = after_run.checked_add(1)?;
     }
     Some(MarkerRun {
         width: after_run - start,
@@ -245,13 +245,30 @@ fn build_term(
         }
     }
 
-    let logical_bytes = input[section.payload_start..logical_end]
+    let logical_bytes = input
+        .get(section.payload_start..logical_end)
+        .ok_or_else(|| {
+            input_error(
+                "section payload range is outside the source bytes",
+                Some(region_index),
+                Some(section.header_offset),
+            )
+        })?
         .to_vec()
         .into_boxed_slice();
+    let label = input
+        .get(section.label.start..section.label.end)
+        .ok_or_else(|| {
+            input_error(
+                "section label range is outside the source bytes",
+                Some(region_index),
+                Some(section.header_offset),
+            )
+        })?;
     Term::from_label_bytes(
         ordinal,
         section.kind,
-        &input[section.label.start..section.label.end],
+        label,
         logical_bytes,
         synthetic_separator,
         Some(region_index),
@@ -266,16 +283,35 @@ fn parse_region(
     width: usize,
     region_index: usize,
 ) -> Result<(ConflictRegion, usize), DomainError> {
-    let opening = lines[opening_index];
+    let opening = lines.get(opening_index).copied().ok_or_else(|| {
+        input_error(
+            "conflict opening line is outside the scanned source",
+            Some(region_index),
+            Some(input.len()),
+        )
+    })?;
+    let next_index = opening_index.checked_add(1).ok_or_else(|| {
+        input_error(
+            "conflict opening line index overflowed",
+            Some(region_index),
+            Some(opening.full.start),
+        )
+    })?;
     let first = first_section(
         input,
-        lines.get(opening_index + 1).copied(),
+        lines.get(next_index).copied(),
         width,
         region_index,
         opening.full.end,
     )?;
     let mut sections = vec![first];
-    let mut line_index = opening_index + 2;
+    let mut line_index = opening_index.checked_add(2).ok_or_else(|| {
+        input_error(
+            "conflict line index overflowed",
+            Some(region_index),
+            Some(opening.full.start),
+        )
+    })?;
 
     while let Some(&line) = lines.get(line_index) {
         if let Some(style) = unsupported_style(input, line, width) {
@@ -331,7 +367,14 @@ fn parse_region(
                 let marker = SnapshotMarker::new(SnapshotStyle::Snapshot, width, width)?;
                 let source_range = ByteRange::new(opening.full.start, line.full.end)?;
                 let region = ConflictRegion::new(source_range, marker, terms)?;
-                return Ok((region, line_index + 1));
+                let next_line = line_index.checked_add(1).ok_or_else(|| {
+                    input_error(
+                        "conflict line index overflowed",
+                        Some(region_index),
+                        Some(line.full.end),
+                    )
+                })?;
+                return Ok((region, next_line));
             }
         }
 
@@ -341,7 +384,13 @@ fn parse_region(
             }
             sections.push(section);
         }
-        line_index += 1;
+        line_index = line_index.checked_add(1).ok_or_else(|| {
+            input_error(
+                "conflict line index overflowed",
+                Some(region_index),
+                Some(input.len()),
+            )
+        })?;
     }
 
     Err(input_error(
@@ -397,7 +446,9 @@ pub fn parse_snapshot(input: &[u8]) -> Result<ParsedDocument, DomainError> {
             regions.push(region);
             line_index = next_line;
         } else {
-            line_index += 1;
+            line_index = line_index
+                .checked_add(1)
+                .ok_or_else(|| input_error("line index overflowed", None, Some(input.len())))?;
         }
     }
 
@@ -505,8 +556,17 @@ pub fn validate_apply(request: ApplyValidationRequest<'_>) -> Result<ApplyPlan, 
             start: group.start,
             end: group.end,
         };
-        let replacement = &request.resolved[resolved_start..resolved_end];
-        if request.original_source[original_range.start..original_range.end] != *replacement {
+        let replacement = request
+            .resolved
+            .get(resolved_start..resolved_end)
+            .ok_or_else(|| {
+                DomainError::invalid("resolved conflict range is outside the resolved bytes")
+            })?;
+        let original = request
+            .original_source
+            .get(original_range.start..original_range.end)
+            .ok_or_else(|| DomainError::invalid("conflict range is outside the source bytes"))?;
+        if original != replacement {
             hunks.push(DiffHunk::new(
                 hunks.len(),
                 original_range,
@@ -552,10 +612,26 @@ fn map_resolved_groups(
     resolved: &[u8],
     groups: &[ConflictGroup],
 ) -> Result<Vec<(usize, usize)>, DomainError> {
-    let first = groups[0];
-    let last = *groups.last().unwrap();
-    let prefix = &original[..first.start];
-    let suffix = &original[last.end..];
+    let first = groups.first().copied().ok_or_else(|| {
+        DomainError::invalid("cannot map resolved bytes without a conflict group")
+    })?;
+    let last = groups.last().copied().ok_or_else(|| {
+        DomainError::invalid("cannot map resolved bytes without a conflict group")
+    })?;
+    let prefix = original.get(..first.start).ok_or_else(|| {
+        input_error(
+            "conflict group prefix is outside the source bytes",
+            Some(first.first_region),
+            Some(first.start),
+        )
+    })?;
+    let suffix = original.get(last.end..).ok_or_else(|| {
+        input_error(
+            "conflict group suffix is outside the source bytes",
+            Some(last.last_region),
+            Some(last.end),
+        )
+    })?;
     if resolved.len() < prefix.len() || resolved.get(..prefix.len()) != Some(prefix) {
         let actual = resolved.get(..prefix.len()).unwrap_or_default();
         let offset = first_difference(prefix, actual).unwrap_or(0);
@@ -578,8 +654,17 @@ fn map_resolved_groups(
     }
 
     let mut ranges = vec![(0, 0); groups.len()];
-    ranges[0].0 = prefix.len();
-    let suffix_start = resolved.len() - suffix.len();
+    let first_range = ranges
+        .first_mut()
+        .ok_or_else(|| DomainError::invalid("cannot map resolved bytes without a range slot"))?;
+    first_range.0 = prefix.len();
+    let suffix_start = resolved.len().checked_sub(suffix.len()).ok_or_else(|| {
+        guard_violation(
+            last.last_region,
+            last.end,
+            "the source suffix changed or is missing",
+        )
+    })?;
     if find_group_boundaries(
         0,
         prefix.len(),
@@ -593,8 +678,8 @@ fn map_resolved_groups(
     }
 
     Err(guard_violation(
-        groups[0].first_region,
-        groups[0].start,
+        first.first_region,
+        first.start,
         "bytes between conflict regions changed or are missing",
     ))
 }
@@ -608,23 +693,38 @@ fn find_group_boundaries(
     groups: &[ConflictGroup],
     ranges: &mut [(usize, usize)],
 ) -> bool {
-    if group_index + 1 == groups.len() {
-        ranges[group_index] = (replacement_start, suffix_start);
+    if group_index.checked_add(1) == Some(groups.len()) {
+        let Some(range) = ranges.get_mut(group_index) else {
+            return false;
+        };
+        *range = (replacement_start, suffix_start);
         return outside_segments_match(original, resolved, groups, ranges);
     }
 
-    let separator_start_in_source = groups[group_index].end;
-    let separator_end_in_source = groups[group_index + 1].start;
-    let separator = &original[separator_start_in_source..separator_end_in_source];
+    let Some(current) = groups.get(group_index).copied() else {
+        return false;
+    };
+    let Some(next) = groups.get(group_index + 1).copied() else {
+        return false;
+    };
+    let Some(separator) = original.get(current.end..next.start) else {
+        return false;
+    };
     let search_end = suffix_start.min(resolved.len());
     for candidate in replacement_start..=search_end {
         if resolved.get(candidate..candidate.saturating_add(separator.len())) != Some(separator) {
             continue;
         }
-        ranges[group_index] = (replacement_start, candidate);
+        let Some(range) = ranges.get_mut(group_index) else {
+            return false;
+        };
+        *range = (replacement_start, candidate);
+        let Some(next_start) = candidate.checked_add(separator.len()) else {
+            return false;
+        };
         if find_group_boundaries(
             group_index + 1,
-            candidate + separator.len(),
+            next_start,
             suffix_start,
             original,
             resolved,
@@ -643,23 +743,44 @@ fn outside_segments_match(
     groups: &[ConflictGroup],
     ranges: &[(usize, usize)],
 ) -> bool {
-    let first = groups[0];
-    if resolved.get(..ranges[0].0) != Some(&original[..first.start]) {
+    let Some(first) = groups.first().copied() else {
+        return false;
+    };
+    let Some((first_start, _)) = ranges.first().copied() else {
+        return false;
+    };
+    let Some(original_prefix) = original.get(..first.start) else {
+        return false;
+    };
+    if resolved.get(..first_start) != Some(original_prefix) {
         return false;
     }
     for index in 1..groups.len() {
-        let previous = groups[index - 1];
-        let current = groups[index];
-        let (_, previous_end) = ranges[index - 1];
-        let (current_start, _) = ranges[index];
-        if resolved.get(previous_end..current_start) != Some(&original[previous.end..current.start])
-        {
+        let (Some(previous), Some(current), Some((_, previous_end)), Some((current_start, _))) = (
+            groups.get(index - 1),
+            groups.get(index),
+            ranges.get(index - 1),
+            ranges.get(index),
+        ) else {
+            return false;
+        };
+        let Some(original_separator) = original.get(previous.end..current.start) else {
+            return false;
+        };
+        if resolved.get(*previous_end..*current_start) != Some(original_separator) {
             return false;
         }
     }
-    let last = groups.last().unwrap();
-    let (_, last_end) = ranges.last().unwrap();
-    resolved.get(*last_end..) == Some(&original[last.end..])
+    let Some(last) = groups.last().copied() else {
+        return false;
+    };
+    let Some((_, last_end)) = ranges.last().copied() else {
+        return false;
+    };
+    let Some(original_suffix) = original.get(last.end..) else {
+        return false;
+    };
+    resolved.get(last_end..) == Some(original_suffix)
 }
 
 fn compare_outside_segments(
@@ -669,35 +790,87 @@ fn compare_outside_segments(
     groups: &[ConflictGroup],
     resolved_ranges: &[(usize, usize)],
 ) -> Result<(), DomainError> {
-    let first = groups[0];
+    let first = groups.first().copied().ok_or_else(|| {
+        DomainError::invalid("cannot compare outside bytes without a conflict group")
+    })?;
+    let (first_start, _) = resolved_ranges.first().copied().ok_or_else(|| {
+        DomainError::invalid("cannot compare outside bytes without a resolved range")
+    })?;
+    let original_prefix = original.get(..first.start).ok_or_else(|| {
+        input_error(
+            "conflict group prefix is outside the source bytes",
+            Some(first.first_region),
+            Some(first.start),
+        )
+    })?;
+    let resolved_prefix = resolved.get(..first_start).ok_or_else(|| {
+        DomainError::invalid("resolved prefix range is outside the resolved bytes")
+    })?;
     compare_outside(
         first.first_region,
-        &original[..first.start],
-        &resolved[..resolved_ranges[0].0],
+        original_prefix,
+        resolved_prefix,
         0,
         "source prefix",
     )?;
 
     for group_index in 1..groups.len() {
-        let previous = groups[group_index - 1];
-        let current = groups[group_index];
-        let (_, previous_end) = resolved_ranges[group_index - 1];
-        let (current_start, _) = resolved_ranges[group_index];
+        let previous = groups
+            .get(group_index - 1)
+            .copied()
+            .ok_or_else(|| DomainError::invalid("missing previous conflict group"))?;
+        let current = groups
+            .get(group_index)
+            .copied()
+            .ok_or_else(|| DomainError::invalid("missing current conflict group"))?;
+        let (_, previous_end) = resolved_ranges
+            .get(group_index - 1)
+            .copied()
+            .ok_or_else(|| DomainError::invalid("missing previous resolved range"))?;
+        let (current_start, _) = resolved_ranges
+            .get(group_index)
+            .copied()
+            .ok_or_else(|| DomainError::invalid("missing current resolved range"))?;
+        let original_separator = original.get(previous.end..current.start).ok_or_else(|| {
+            input_error(
+                "bytes between conflict groups are outside the source bytes",
+                Some(current.first_region),
+                Some(previous.end),
+            )
+        })?;
+        let resolved_separator = resolved.get(previous_end..current_start).ok_or_else(|| {
+            DomainError::invalid("resolved separator range is outside the resolved bytes")
+        })?;
         compare_outside(
             current.first_region,
-            &original[previous.end..current.start],
-            &resolved[previous_end..current_start],
+            original_separator,
+            resolved_separator,
             previous.end,
             "bytes between conflict regions",
         )?;
     }
 
-    let last = groups.last().unwrap();
-    let (_, last_end) = resolved_ranges[groups.len() - 1];
+    let last = groups.last().copied().ok_or_else(|| {
+        DomainError::invalid("cannot compare outside bytes without a conflict group")
+    })?;
+    let (_, last_end) = resolved_ranges
+        .last()
+        .copied()
+        .ok_or_else(|| DomainError::invalid("missing final resolved range"))?;
+    let original_suffix = original.get(last.end..).ok_or_else(|| {
+        input_error(
+            "conflict group suffix is outside the source bytes",
+            Some(last.last_region),
+            Some(last.end),
+        )
+    })?;
+    let resolved_suffix = resolved.get(last_end..).ok_or_else(|| {
+        DomainError::invalid("resolved suffix range is outside the resolved bytes")
+    })?;
     compare_outside(
         last.last_region,
-        &original[last.end..],
-        &resolved[last_end..],
+        original_suffix,
+        resolved_suffix,
         last.end,
         "source suffix",
     )?;
@@ -713,9 +886,14 @@ fn compare_outside(
     description: &str,
 ) -> Result<(), DomainError> {
     if let Some(offset) = first_difference(expected, actual) {
-        let start = source_start + offset.min(expected.len());
-        let end = if start < source_start + expected.len() {
-            start + 1
+        let start = source_start
+            .checked_add(offset.min(expected.len()))
+            .unwrap_or(usize::MAX);
+        let expected_end = source_start
+            .checked_add(expected.len())
+            .unwrap_or(usize::MAX);
+        let end = if start < expected_end {
+            start.saturating_add(1)
         } else {
             start
         };
@@ -792,19 +970,20 @@ fn reject_resolved_markers(manifest: &Manifest, resolved: &[u8]) -> Result<(), D
 
 fn continuation_label<'a>(input: &'a [u8], line: Line, labels: &[&'a [u8]]) -> Option<&'a [u8]> {
     let mut cursor = line.content.start;
-    while cursor < line.content.end && input[cursor] == b'\\' {
-        cursor += 1;
+    while cursor < line.content.end && input.get(cursor).copied() == Some(b'\\') {
+        cursor = cursor.checked_add(1)?;
     }
     if cursor == line.content.start {
         return None;
     }
-    while cursor < line.content.end && matches!(input[cursor], b' ' | b'\t') {
-        cursor += 1;
+    while cursor < line.content.end && matches!(input.get(cursor).copied(), Some(b' ' | b'\t')) {
+        cursor = cursor.checked_add(1)?;
     }
+    let label_start = cursor.checked_add(3)?;
     if !input.get(cursor..line.content.end)?.starts_with(b"to:") {
         return None;
     }
-    let candidate = input[cursor + 3..line.content.end].trim_ascii();
+    let candidate = input.get(label_start..line.content.end)?.trim_ascii();
     labels
         .iter()
         .copied()
@@ -825,15 +1004,30 @@ pub fn render_unified_diff(
     let mut reconstructed = Vec::new();
     let mut original_cursor = 0;
     let mut resolved_starts = Vec::with_capacity(plan.hunks.len());
-    let mut resolved_cursor = 0;
+    let mut resolved_cursor: usize = 0;
     for hunk in &plan.hunks {
-        reconstructed.extend_from_slice(&original[original_cursor..hunk.original_range.start]);
-        resolved_starts.push(resolved_cursor + hunk.original_range.start - original_cursor);
+        let original_start = hunk.original_range.start;
+        let original_end = hunk.original_range.end;
+        let unchanged = original
+            .get(original_cursor..original_start)
+            .ok_or_else(|| DomainError::invalid("diff hunk range is outside the original bytes"))?;
+        let resolved_start = resolved_cursor
+            .checked_add(
+                original_start
+                    .checked_sub(original_cursor)
+                    .ok_or_else(|| DomainError::invalid("diff hunks are out of source order"))?,
+            )
+            .ok_or_else(|| DomainError::invalid("resolved diff offset overflow"))?;
+        reconstructed.extend_from_slice(unchanged);
+        resolved_starts.push(resolved_start);
         reconstructed.extend_from_slice(&hunk.replacement);
         resolved_cursor = reconstructed.len();
-        original_cursor = hunk.original_range.end;
+        original_cursor = original_end;
     }
-    reconstructed.extend_from_slice(&original[original_cursor..]);
+    let unchanged = original
+        .get(original_cursor..)
+        .ok_or_else(|| DomainError::invalid("diff hunk range is outside the original bytes"))?;
+    reconstructed.extend_from_slice(unchanged);
     if reconstructed != resolved {
         return Err(DomainError::InvalidResolved {
             message: "diff plan does not reconstruct the resolved bytes".into(),
@@ -847,7 +1041,9 @@ pub fn render_unified_diff(
 
     let mut output = String::from("--- source\n+++ resolved\n");
     for (hunk, &resolved_start) in plan.hunks.iter().zip(&resolved_starts) {
-        let old = &original[hunk.original_range.start..hunk.original_range.end];
+        let old = original
+            .get(hunk.original_range.start..hunk.original_range.end)
+            .ok_or_else(|| DomainError::invalid("diff hunk range is outside the original bytes"))?;
         let new = &hunk.replacement;
         let old_lines = diff_lines(old);
         let new_lines = diff_lines(new);
@@ -923,7 +1119,9 @@ fn escape_bytes(input: &[u8]) -> String {
     let mut output = String::new();
     let mut cursor = 0;
     while cursor < input.len() {
-        let byte = input[cursor];
+        let Some(&byte) = input.get(cursor) else {
+            break;
+        };
         match byte {
             b' '..=b'~' if byte != b'\\' => {
                 output.push(byte as char);
@@ -942,19 +1140,21 @@ fn escape_bytes(input: &[u8]) -> String {
                 cursor += 1;
             }
             _ => {
-                let length = utf8_char_length(input, cursor);
-                if let Some(length) = length {
-                    if let Ok(text) = std::str::from_utf8(&input[cursor..cursor + length]) {
-                        let character = text.chars().next().unwrap();
-                        if !character.is_control() {
-                            output.push(character);
-                            cursor += length;
-                            continue;
+                if let Some(length) = utf8_char_length(input, cursor) {
+                    if let Some(bytes) = input.get(cursor..cursor.saturating_add(length)) {
+                        if let Ok(text) = std::str::from_utf8(bytes) {
+                            if let Some(character) = text.chars().next() {
+                                if !character.is_control() {
+                                    output.push(character);
+                                    cursor = cursor.saturating_add(length);
+                                    continue;
+                                }
+                            }
                         }
                     }
                 }
                 output.push_str(&format!("\\x{byte:02x}"));
-                cursor += 1;
+                cursor = cursor.saturating_add(1);
             }
         }
     }
@@ -970,7 +1170,10 @@ fn utf8_char_length(input: &[u8], start: usize) -> Option<usize> {
         0xf0..=0xf4 => 4,
         _ => return None,
     };
-    (start + length <= input.len()).then_some(length)
+    start
+        .checked_add(length)
+        .filter(|end| *end <= input.len())
+        .map(|_| length)
 }
 
 fn hex_digest(digest: [u8; 32]) -> String {
@@ -1223,6 +1426,7 @@ mod apply_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{ManifestRegion, ManifestTerm};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -2751,5 +2955,147 @@ mod tests {
             true,
         );
         assert_eq!(parse_snapshot(&input).unwrap().regions[0].terms.len(), 2);
+    }
+
+    fn manifest_for_core_tests(source: &[u8]) -> Manifest {
+        let document = parse_snapshot(source).expect("test snapshot should parse");
+        let regions = document
+            .regions
+            .iter()
+            .enumerate()
+            .map(|(region_index, region)| ManifestRegion {
+                region_index,
+                source_range: region.source_range,
+                terms: region
+                    .terms
+                    .iter()
+                    .map(|term| {
+                        ManifestTerm::from_term(
+                            region_index,
+                            term,
+                            crate::domain::Sha256Digest(sha256(&term.logical_bytes)),
+                        )
+                    })
+                    .collect(),
+            })
+            .collect();
+        Manifest::new(
+            crate::domain::MANIFEST_SCHEMA_VERSION,
+            crate::domain::SourceIdentity::new("source"),
+            crate::domain::Sha256Digest(sha256(source)),
+            document.marker,
+            source.len(),
+            regions,
+        )
+        .expect("test manifest should validate")
+    }
+
+    #[test]
+    fn apply_accepts_empty_replacement_and_deletion() {
+        let source =
+            b"before\n<<<<<<< one\n+++++++ side\nremove me\n------- base\nbase\n>>>>>>> end\nafter\n";
+        let manifest = manifest_for_core_tests(source);
+        let plan = validate_apply(ApplyValidationRequest {
+            manifest: &manifest,
+            original_source: source,
+            resolved: b"before\nafter\n",
+        })
+        .expect("deletion should be valid");
+        assert_eq!(plan.hunks.len(), 1);
+        assert!(plan.hunks[0].replacement.is_empty());
+        assert_eq!(
+            plan.hunks[0].old_len,
+            manifest.regions[0].source_range.len()
+        );
+    }
+
+    #[test]
+    fn apply_maps_multiple_regions_repeated_bases_and_invalid_bytes() {
+        let source = b"p\n<<<<<<< one\n+++++++ side\n\xff\n------- base\nbase\n------- base2\n\x80\n>>>>>>> end\nm\n<<<<<<< two\n+++++++ side\nold\r\n------- base\nbase\r\n>>>>>>> end\nq\n";
+        let manifest = manifest_for_core_tests(source);
+        let resolved = b"p\n\xff\nm\nreplacement\nq\n";
+        let plan = validate_apply(ApplyValidationRequest {
+            manifest: &manifest,
+            original_source: source,
+            resolved,
+        })
+        .expect("multi-region replacement should be valid");
+        assert_eq!(plan.hunks.len(), 2);
+        let rendered = render_unified_diff(source, resolved, &plan).expect("diff should render");
+        assert!(rendered.contains("\\xff"));
+        assert!(rendered.contains("replacement"));
+    }
+
+    #[test]
+    fn public_core_boundaries_return_errors_instead_of_panicking() {
+        let marker = SnapshotMarker::default();
+        let term = Term::new(0, TermKind::Side, "side", b"x".to_vec(), false).unwrap();
+        let malformed_document = ParsedDocument {
+            source: b"x".to_vec().into_boxed_slice(),
+            regions: vec![ConflictRegion {
+                source_range: ByteRange {
+                    start: usize::MAX,
+                    end: usize::MAX,
+                },
+                marker,
+                terms: vec![term.clone()],
+            }],
+            marker,
+        };
+        let malformed_plan = ApplyPlan {
+            hunks: vec![DiffHunk {
+                sequence: 0,
+                original_range: ByteRange {
+                    start: usize::MAX,
+                    end: usize::MAX,
+                },
+                replacement: Box::new([]),
+                old_len: 0,
+                new_len: 0,
+            }],
+        };
+        let manifest = Manifest {
+            schema_version: crate::domain::MANIFEST_SCHEMA_VERSION,
+            source: crate::domain::SourceIdentity::new("source"),
+            source_digest: crate::domain::Sha256Digest(sha256(b"x")),
+            marker,
+            source_length: 1,
+            regions: vec![ManifestRegion {
+                region_index: 0,
+                source_range: ByteRange {
+                    start: usize::MAX,
+                    end: usize::MAX,
+                },
+                terms: vec![ManifestTerm::from_term(
+                    0,
+                    &term,
+                    crate::domain::Sha256Digest::ZERO,
+                )],
+            }],
+        };
+
+        let materialize = std::panic::catch_unwind(|| materialize_scaffold(&malformed_document));
+        assert!(materialize.is_ok());
+        assert!(materialize.unwrap().is_err());
+
+        let validate = std::panic::catch_unwind(|| {
+            validate_apply(ApplyValidationRequest {
+                manifest: &manifest,
+                original_source: b"x",
+                resolved: b"y",
+            })
+        });
+        assert!(validate.is_ok());
+        assert!(validate.unwrap().is_err());
+
+        let render = std::panic::catch_unwind(|| render_unified_diff(b"x", b"", &malformed_plan));
+        assert!(render.is_ok());
+        assert!(render.unwrap().is_err());
+
+        for input in [b"".as_slice(), b"<", b"<<<<<<<\n+++++++\xff\n"] {
+            let parsed = std::panic::catch_unwind(|| parse_snapshot(input));
+            assert!(parsed.is_ok());
+            assert!(parsed.unwrap().is_err());
+        }
     }
 }

@@ -1,12 +1,14 @@
 use std::process::ExitCode;
 
-use jj_conflict_workspace::{ApplyReport, CliError, Command, USAGE, parse_args};
+use jj_conflict_workspace::{
+    ApplyReport, CliError, Command, USAGE, encode_path_for_output, parse_args,
+};
 
 fn main() -> ExitCode {
     match parse_args(std::env::args_os().skip(1)) {
         Ok(Command::Prepare(options)) => match jj_conflict_workspace::prepare(&options) {
             Ok(workspace) => {
-                println!("{}", workspace.display());
+                println!("{}", encode_path_for_output(&workspace));
                 ExitCode::SUCCESS
             }
             Err(error) => {
@@ -25,7 +27,7 @@ fn main() -> ExitCode {
             }
         },
         Err(CliError::HelpRequested) => {
-            println!("{USAGE}");
+            print!("{USAGE}");
             ExitCode::SUCCESS
         }
         Err(error) => {
@@ -40,14 +42,14 @@ fn print_apply_report(report: &ApplyReport) {
         println!(
             "Applied {} change(s) to `{}` ({} bytes -> {} bytes).",
             report.changed_hunks,
-            report.source_path.display(),
+            encode_path_for_output(&report.source_path),
             report.old_bytes,
             report.new_bytes
         );
     } else {
         println!(
             "Proposed changes for source `{}`:",
-            report.source_path.display()
+            encode_path_for_output(&report.source_path)
         );
         print!("{}", report.diff);
         println!("No files were modified (dry-run).");

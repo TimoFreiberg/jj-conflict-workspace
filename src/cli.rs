@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::error::CliError;
 
-pub const USAGE: &str = "Usage:\n  jcw prepare --file FILE [--output-dir DIR]\n  jcw apply --resolved-file FILE [--manifest FILE] [--write]\n  jcw --help";
+pub const USAGE: &str = "Usage:\n  jcw prepare --file FILE [--output-dir DIR]\n  jcw apply --resolved-file FILE [--manifest FILE] [--write]\n  jcw --help\n\nWorkflow:\n  1. Prepare a private workspace from a JJ Snapshot conflict.\n  2. Edit <workspace>/resolved.\n  3. Apply without --write for a read-only deterministic diff.\n  4. Add --write only to atomically install a validated resolution.\n\nThe workspace, manifest, and numbered region term artifacts are retained.\nOnly Snapshot style is supported; unsupported or malformed input fails closed.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrepareOptions {
