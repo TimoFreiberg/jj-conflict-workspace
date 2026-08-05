@@ -518,7 +518,7 @@ fn restrict_file(_file: &File, _path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn sha256(input: &[u8]) -> [u8; 32] {
+pub(crate) fn sha256(input: &[u8]) -> [u8; 32] {
     let mut state = [
         0x6a09e667u32,
         0xbb67ae85,

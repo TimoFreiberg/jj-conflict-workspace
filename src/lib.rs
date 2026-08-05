@@ -11,7 +11,7 @@ pub mod error;
 mod prepare;
 
 pub use cli::{ApplyOptions, Command, PrepareOptions, USAGE, parse_args};
-pub use core::{materialize_scaffold, parse_snapshot, validate_apply};
+pub use core::{materialize_scaffold, parse_snapshot, render_unified_diff, validate_apply};
 pub use domain::{
     ApplyPlan, ApplyValidationRequest, ByteRange, ConflictRegion, DiffHunk,
     MANIFEST_SCHEMA_VERSION, MIN_MARKER_WIDTH, Manifest, ManifestRegion, ManifestTerm,
@@ -201,9 +201,7 @@ mod public_api_tests {
         };
         assert!(matches!(
             validate_apply(request),
-            Err(DomainError::NotImplemented {
-                operation: "validate_apply"
-            })
+            Err(DomainError::StaleSource { .. })
         ));
     }
 }
