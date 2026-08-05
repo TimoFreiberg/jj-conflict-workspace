@@ -3,7 +3,16 @@
   "case_name": "snapshot-crlf",
   "status": "supported",
   "style": "snapshot",
-  "description": "CRLF snapshot materialization from the aa/bb/cc matrix tuple.",
+  "accepted_style": "snapshot",
+  "extraction": "generated_from_matrix_tuple",
+  "term_representation": {
+    "stored_bytes": "logical term bytes; remove one rendered separator EOL only when the closing marker lacks an EOL",
+    "resolved_uses": "stored logical term bytes",
+    "materialized_separator_eol_field": "synthetic_separator_eol",
+    "logical_final_newline_field": "artifacts[term].final_newline",
+    "rendered_final_newline_rule": "logical final-newline fact unless synthetic_separator_eol is true; then rendered section has the separator EOL"
+  },
+  "description": "CRLF snapshot materialization generated from the aa/bb/cc matrix tuple; the upstream test asserts EOL preservation and round-trip rather than embedding expected bytes.",
   "source": {
     "path": "lib/src/conflicts.rs",
     "symbol": "test_materialize_conflict",
@@ -12,7 +21,7 @@
       1408
     ],
     "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/src/conflicts.rs#L1335-L1408",
-    "note": "Tuple: base=aa, side1=bb, side2=cc, all with ending EOL, Snapshot style, CRLF_EOL."
+    "note": "Generated from tuple base=aa, side1=bb, side2=cc, all with ending EOL, Snapshot style, CRLF_EOL. The matrix constructs a leading CRLF before the merge and asserts EOL preservation/round-trip rather than embedding expected bytes."
   },
   "normalization": {
     "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",

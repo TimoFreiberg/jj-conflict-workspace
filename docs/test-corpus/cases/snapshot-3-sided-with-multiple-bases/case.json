@@ -3,6 +3,14 @@
   "case_name": "snapshot-3-sided-with-multiple-bases",
   "status": "supported",
   "style": "snapshot",
+  "accepted_style": "snapshot",
+  "term_representation": {
+    "stored_bytes": "logical term bytes; remove one rendered separator EOL only when the closing marker lacks an EOL",
+    "resolved_uses": "stored logical term bytes",
+    "materialized_separator_eol_field": "synthetic_separator_eol",
+    "logical_final_newline_field": "artifacts[term].final_newline",
+    "rendered_final_newline_rule": "logical final-newline fact unless synthetic_separator_eol is true; then rendered section has the separator EOL"
+  },
   "description": "Three-sided snapshot conflict containing two base terms.",
   "source": {
     "path": "lib/tests/test_conflicts.rs",

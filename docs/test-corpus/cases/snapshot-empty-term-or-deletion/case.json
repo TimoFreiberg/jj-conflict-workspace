@@ -3,7 +3,16 @@
   "case_name": "snapshot-empty-term-or-deletion",
   "status": "supported",
   "style": "snapshot",
-  "description": "Snapshot conflict whose first side is an explicitly empty term.",
+  "accepted_style": "snapshot",
+  "extraction": "adapted_generated",
+  "term_representation": {
+    "stored_bytes": "logical term bytes; remove one rendered separator EOL only when the closing marker lacks an EOL",
+    "resolved_uses": "stored logical term bytes",
+    "materialized_separator_eol_field": "synthetic_separator_eol",
+    "logical_final_newline_field": "artifacts[term].final_newline",
+    "rendered_final_newline_rule": "logical final-newline fact unless synthetic_separator_eol is true; then rendered section has the separator EOL"
+  },
+  "description": "Snapshot conflict adapted from the upstream empty-side behavior; its first side is an explicitly empty term, not a missing term artifact.",
   "source": {
     "path": "lib/tests/test_conflicts.rs",
     "symbol": "test_materialize_conflict_no_newlines_at_eof",
@@ -12,7 +21,7 @@
       693
     ],
     "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L645-L693",
-    "note": "The empty-side edge is adapted to snapshot style; the upstream assertion shown here is diff style."
+    "note": "Adapted/generated Snapshot bytes from the empty-side edge; the cited upstream assertion is diff style. An empty term is represented by an existing zero-byte term-000 artifact; a missing None side is a separate future representation."
   },
   "normalization": {
     "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",

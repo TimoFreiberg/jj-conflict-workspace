@@ -53,7 +53,7 @@
           580
         ],
         "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L483-L580",
-        "note": "The upstream round-trip body has two stable regions; this corpus adapts its diff-style assertion to the snapshot style under test."
+        "note": "The upstream round-trip body materializes Diff style; this corpus adapts the stable two-region scenario and logical terms into a generated Snapshot-style assertion."
       },
       "sha256": "ff25bcd1ae9ce5d67acf05db187130e0d7b646355316c9e110bd58283c124756",
       "byte_length": 320,
@@ -68,11 +68,11 @@
         "path": "lib/tests/test_conflicts.rs",
         "symbol": "test_update_conflict_from_content_with_long_markers",
         "line_range": [
-          1948,
-          2107
+          1993,
+          2012
         ],
-        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1948-L2107",
-        "note": "Canonical extraction uses the library snapshot assertion, not the corroborating CLI test."
+        "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1993-L2012",
+        "note": "Canonical bytes are the first 16-character library snapshot assertion; shorter payload marker-like lines come from the source terms at lines 1963-1979. The later 11-character rematerialization is comparison evidence only."
       },
       "sha256": "f2f441c26b8952b48ece73ae5a9771b192ead6a1c86256af965100eb63f28197",
       "byte_length": 376,
@@ -109,7 +109,7 @@
           1408
         ],
         "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/src/conflicts.rs#L1335-L1408",
-        "note": "Tuple: base=aa, side1=bb, side2=cc, all with ending EOL, Snapshot style, CRLF_EOL."
+        "note": "Generated from tuple base=aa, side1=bb, side2=cc, all with ending EOL, Snapshot style, CRLF_EOL. The matrix constructs a leading CRLF before the merge and asserts EOL preservation/round-trip rather than embedding expected bytes."
       },
       "sha256": "38eb0e54035ce9b8a9c984be4f994d2b40304356cf3ddebb47a36e29934e45a9",
       "byte_length": 117,
@@ -146,7 +146,7 @@
           693
         ],
         "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L645-L693",
-        "note": "The empty-side edge is adapted to snapshot style; the upstream assertion shown here is diff style."
+        "note": "Adapted/generated Snapshot bytes from the empty-side edge; the cited upstream assertion is diff style. An empty term is represented by an existing zero-byte term-000 artifact; a missing None side is a separate future representation."
       },
       "sha256": "91e33c771efc3df012e1448ce44d8fdf34e1ef5023d6a3575891a3d67471b0c6",
       "byte_length": 109,

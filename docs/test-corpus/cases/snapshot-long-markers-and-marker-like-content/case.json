@@ -3,16 +3,24 @@
   "case_name": "snapshot-long-markers-and-marker-like-content",
   "status": "supported",
   "style": "snapshot",
+  "accepted_style": "snapshot",
+  "term_representation": {
+    "stored_bytes": "logical term bytes; remove one rendered separator EOL only when the closing marker lacks an EOL",
+    "resolved_uses": "stored logical term bytes",
+    "materialized_separator_eol_field": "synthetic_separator_eol",
+    "logical_final_newline_field": "artifacts[term].final_newline",
+    "rendered_final_newline_rule": "logical final-newline fact unless synthetic_separator_eol is true; then rendered section has the separator EOL"
+  },
   "description": "Two regions with sixteen-byte outer markers and shorter marker-like payload lines.",
   "source": {
     "path": "lib/tests/test_conflicts.rs",
     "symbol": "test_update_conflict_from_content_with_long_markers",
     "line_range": [
-      1948,
-      2107
+      1993,
+      2012
     ],
-    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1948-L2107",
-    "note": "Canonical extraction uses the library snapshot assertion, not the corroborating CLI test."
+    "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L1993-L2012",
+    "note": "Canonical bytes are the first 16-character library snapshot assertion; shorter payload marker-like lines come from the source terms at lines 1963-1979. The later 11-character rematerialization is comparison evidence only."
   },
   "normalization": {
     "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",

@@ -3,7 +3,16 @@
   "case_name": "snapshot-multiple-regions",
   "status": "supported",
   "style": "snapshot",
-  "description": "Two independent snapshot regions separated by stable content.",
+  "accepted_style": "snapshot",
+  "extraction": "adapted_generated",
+  "term_representation": {
+    "stored_bytes": "logical term bytes; remove one rendered separator EOL only when the closing marker lacks an EOL",
+    "resolved_uses": "stored logical term bytes",
+    "materialized_separator_eol_field": "synthetic_separator_eol",
+    "logical_final_newline_field": "artifacts[term].final_newline",
+    "rendered_final_newline_rule": "logical final-newline fact unless synthetic_separator_eol is true; then rendered section has the separator EOL"
+  },
+  "description": "Two independent snapshot regions adapted from the upstream diff-style round-trip scenario; stable surrounding bytes and terms are retained, but the checked-in assertion is generated Snapshot style.",
   "source": {
     "path": "lib/tests/test_conflicts.rs",
     "symbol": "test_materialize_parse_roundtrip",
@@ -12,7 +21,7 @@
       580
     ],
     "url": "https://github.com/jj-vcs/jj/blob/6b27ec86af32ff84c209367d2710d234cb192622/lib/tests/test_conflicts.rs#L483-L580",
-    "note": "The upstream round-trip body has two stable regions; this corpus adapts its diff-style assertion to the snapshot style under test."
+    "note": "The upstream round-trip body materializes Diff style; this corpus adapts the stable two-region scenario and logical terms into a generated Snapshot-style assertion."
   },
   "normalization": {
     "de_indentation": "Rust indoc!/snapshot indentation was removed from fixture bytes.",

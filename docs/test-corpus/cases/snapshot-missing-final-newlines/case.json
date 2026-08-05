@@ -3,6 +3,14 @@
   "case_name": "snapshot-missing-final-newlines",
   "status": "supported",
   "style": "snapshot",
+  "accepted_style": "snapshot",
+  "term_representation": {
+    "stored_bytes": "logical term bytes after removing one rendered separator EOL from every section when the closing marker has no EOL",
+    "resolved_uses": "stored logical term bytes",
+    "materialized_separator_eol_field": "synthetic_separator_eol",
+    "logical_final_newline_field": "artifacts[term].final_newline",
+    "rendered_final_newline_rule": "true for every section when synthetic_separator_eol is true; logical term files retain the post-removal final-newline fact"
+  },
   "description": "Snapshot materialization where the final conflict marker has no newline and each second-region section has a separator EOL.",
   "source": {
     "path": "lib/tests/test_conflicts.rs",
