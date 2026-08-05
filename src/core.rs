@@ -733,13 +733,502 @@ mod tests {
         assert!(materialize_scaffold(&marker_mismatch).is_err());
     }
 
-    #[derive(Clone, Copy)]
-    struct ExpectedTerm {
-        kind: TermKind,
-        label: &'static str,
-        synthetic: bool,
+    #[derive(Debug, Clone, PartialEq)]
+    enum MetadataJson {
+        Object(Vec<(String, MetadataJson)>),
+        Array(Vec<MetadataJson>),
+        String(String),
+        Number(usize),
+        Bool(bool),
+        Null,
     }
 
+    struct MetadataParser<'a> {
+        bytes: &'a [u8],
+        offset: usize,
+    }
+
+    impl<'a> MetadataParser<'a> {
+        fn new(bytes: &'a [u8]) -> Self {
+            Self { bytes, offset: 0 }
+        }
+
+        fn parse(mut self) -> Result<MetadataJson, String> {
+            let value = self.value()?;
+            self.whitespace();
+            if self.offset != self.bytes.len() {
+                return Err(format!("unexpected metadata byte at {}", self.offset));
+            }
+            Ok(value)
+        }
+
+        fn value(&mut self) -> Result<MetadataJson, String> {
+            self.whitespace();
+            match self.bytes.get(self.offset).copied() {
+                Some(b'{') => self.object(),
+                Some(b'[') => self.array(),
+                Some(b'\"') => self.string().map(MetadataJson::String),
+                Some(b'0'..=b'9') => self.number().map(MetadataJson::Number),
+                Some(b't') => self.literal(b"true", MetadataJson::Bool(true)),
+                Some(b'f') => self.literal(b"false", MetadataJson::Bool(false)),
+                Some(b'n') => self.literal(b"null", MetadataJson::Null),
+                _ => Err(format!("invalid metadata value at {}", self.offset)),
+            }
+        }
+
+        fn object(&mut self) -> Result<MetadataJson, String> {
+            self.expect(b'{')?;
+            let mut values = Vec::new();
+            self.whitespace();
+            if self.take(b'}') {
+                return Ok(MetadataJson::Object(values));
+            }
+            loop {
+                self.whitespace();
+                let key = self.string()?;
+                self.whitespace();
+                self.expect(b':')?;
+                let value = self.value()?;
+                values.push((key, value));
+                self.whitespace();
+                if self.take(b'}') {
+                    return Ok(MetadataJson::Object(values));
+                }
+                self.expect(b',')?;
+            }
+        }
+
+        fn array(&mut self) -> Result<MetadataJson, String> {
+            self.expect(b'[')?;
+            let mut values = Vec::new();
+            self.whitespace();
+            if self.take(b']') {
+                return Ok(MetadataJson::Array(values));
+            }
+            loop {
+                values.push(self.value()?);
+                self.whitespace();
+                if self.take(b']') {
+                    return Ok(MetadataJson::Array(values));
+                }
+                self.expect(b',')?;
+            }
+        }
+
+        fn string(&mut self) -> Result<String, String> {
+            self.expect(b'\"')?;
+            let mut bytes = Vec::new();
+            while let Some(byte) = self.bytes.get(self.offset).copied() {
+                self.offset += 1;
+                match byte {
+                    b'\"' => {
+                        return String::from_utf8(bytes)
+                            .map_err(|_| "metadata string is not UTF-8".to_owned());
+                    }
+                    b'\\' => {
+                        let escaped = self
+                            .bytes
+                            .get(self.offset)
+                            .copied()
+                            .ok_or_else(|| "truncated metadata escape".to_owned())?;
+                        self.offset += 1;
+                        match escaped {
+                            b'\"' | b'\\' | b'/' => bytes.push(escaped),
+                            b'b' => bytes.push(8),
+                            b'f' => bytes.push(12),
+                            b'n' => bytes.push(b'\n'),
+                            b'r' => bytes.push(b'\r'),
+                            b't' => bytes.push(b'\t'),
+                            b'u' => {
+                                let code = self.hex_quad()?;
+                                let character = char::from_u32(code as u32)
+                                    .ok_or_else(|| "invalid metadata unicode escape".to_owned())?;
+                                let mut encoded = [0; 4];
+                                bytes.extend_from_slice(
+                                    character.encode_utf8(&mut encoded).as_bytes(),
+                                );
+                            }
+                            _ => return Err(format!("invalid metadata escape at {}", self.offset)),
+                        }
+                    }
+                    0..=31 => return Err("unescaped metadata control byte".to_owned()),
+                    _ => bytes.push(byte),
+                }
+            }
+            Err("unterminated metadata string".to_owned())
+        }
+
+        fn hex_quad(&mut self) -> Result<u16, String> {
+            let end = self.offset.saturating_add(4);
+            let bytes = self
+                .bytes
+                .get(self.offset..end)
+                .ok_or_else(|| "truncated metadata unicode escape".to_owned())?;
+            self.offset = end;
+            let mut value = 0u16;
+            for byte in bytes {
+                let digit = match byte {
+                    b'0'..=b'9' => (byte - b'0') as u16,
+                    b'a'..=b'f' => (byte - b'a' + 10) as u16,
+                    b'A'..=b'F' => (byte - b'A' + 10) as u16,
+                    _ => return Err("invalid metadata unicode escape".to_owned()),
+                };
+                value = value
+                    .checked_mul(16)
+                    .and_then(|value| value.checked_add(digit))
+                    .ok_or_else(|| "invalid metadata unicode escape".to_owned())?;
+            }
+            Ok(value)
+        }
+
+        fn number(&mut self) -> Result<usize, String> {
+            let start = self.offset;
+            while matches!(self.bytes.get(self.offset), Some(b'0'..=b'9')) {
+                self.offset += 1;
+            }
+            std::str::from_utf8(&self.bytes[start..self.offset])
+                .map_err(|_| "invalid metadata number".to_owned())?
+                .parse()
+                .map_err(|_| "metadata number is out of range".to_owned())
+        }
+
+        fn literal(&mut self, literal: &[u8], value: MetadataJson) -> Result<MetadataJson, String> {
+            let end = self.offset.saturating_add(literal.len());
+            if self.bytes.get(self.offset..end) == Some(literal) {
+                self.offset = end;
+                Ok(value)
+            } else {
+                Err(format!("invalid metadata literal at {}", self.offset))
+            }
+        }
+
+        fn expect(&mut self, expected: u8) -> Result<(), String> {
+            if self.take(expected) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected metadata byte {expected:?} at {}",
+                    self.offset
+                ))
+            }
+        }
+
+        fn take(&mut self, expected: u8) -> bool {
+            if self.bytes.get(self.offset) == Some(&expected) {
+                self.offset += 1;
+                true
+            } else {
+                false
+            }
+        }
+
+        fn whitespace(&mut self) {
+            while self
+                .bytes
+                .get(self.offset)
+                .is_some_and(|byte| byte.is_ascii_whitespace())
+            {
+                self.offset += 1;
+            }
+        }
+    }
+
+    fn metadata_field<'a>(value: &'a MetadataJson, key: &str) -> &'a MetadataJson {
+        match value {
+            MetadataJson::Object(fields) => fields
+                .iter()
+                .find_map(|(field, value)| (field == key).then_some(value))
+                .unwrap_or_else(|| panic!("metadata field {key:?} is missing")),
+            _ => panic!("metadata value is not an object while looking for {key:?}"),
+        }
+    }
+
+    fn metadata_string(value: &MetadataJson, key: &str) -> String {
+        match metadata_field(value, key) {
+            MetadataJson::String(value) => value.clone(),
+            other => panic!("metadata field {key:?} is not a string: {other:?}"),
+        }
+    }
+
+    fn metadata_number(value: &MetadataJson, key: &str) -> usize {
+        match metadata_field(value, key) {
+            MetadataJson::Number(value) => *value,
+            other => panic!("metadata field {key:?} is not a number: {other:?}"),
+        }
+    }
+
+    fn metadata_bool(value: &MetadataJson, key: &str) -> bool {
+        match metadata_field(value, key) {
+            MetadataJson::Bool(value) => *value,
+            other => panic!("metadata field {key:?} is not a boolean: {other:?}"),
+        }
+    }
+
+    fn metadata_array<'a>(value: &'a MetadataJson, key: &str) -> &'a [MetadataJson] {
+        match metadata_field(value, key) {
+            MetadataJson::Array(values) => values,
+            other => panic!("metadata field {key:?} is not an array: {other:?}"),
+        }
+    }
+
+    fn metadata_file(path: &Path) -> MetadataJson {
+        let bytes = fs::read(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        MetadataParser::new(&bytes)
+            .parse()
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+    }
+
+    fn metadata_path(path: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(path)
+    }
+
+    fn corpus_index() -> MetadataJson {
+        metadata_file(&corpus_root().join("index.json"))
+    }
+
+    fn corpus_cases() -> Vec<MetadataJson> {
+        metadata_array(&corpus_index(), "cases").to_vec()
+    }
+
+    fn case_root(index_case: &MetadataJson) -> PathBuf {
+        let input_path = metadata_string(index_case, "input_path");
+        metadata_path(&input_path)
+            .parent()
+            .expect("corpus input must have a parent directory")
+            .to_owned()
+    }
+
+    fn case_metadata(index_case: &MetadataJson) -> MetadataJson {
+        metadata_file(&case_root(index_case).join("case.json"))
+    }
+
+    fn expected_term_kind(value: &MetadataJson) -> TermKind {
+        match metadata_string(value, "kind").as_str() {
+            "side" => TermKind::Side,
+            "base" => TermKind::Base,
+            kind => panic!("unknown corpus term kind {kind:?}"),
+        }
+    }
+
+    fn assert_supported_metadata_case(index_case: &MetadataJson) {
+        let name = metadata_string(index_case, "case_name");
+        let root = case_root(index_case);
+        let metadata = case_metadata(index_case);
+        assert_eq!(
+            metadata_string(&metadata, "status"),
+            "supported",
+            "{name}: status"
+        );
+        assert_eq!(
+            metadata_string(&metadata, "case_name"),
+            name,
+            "{name}: case name"
+        );
+
+        let input_path = metadata_path(&metadata_string(index_case, "input_path"));
+        let input = fs::read(&input_path).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let document = parse_snapshot(&input).unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(
+            document.source.as_ref(),
+            input.as_slice(),
+            "{name}: source bytes"
+        );
+        assert_eq!(
+            document.regions.len(),
+            metadata_number(&metadata, "region_count"),
+            "{name}: region count"
+        );
+
+        let marker = metadata_field(&metadata, "marker");
+        assert_eq!(
+            document.marker.outer_marker_width,
+            metadata_number(marker, "outer_marker_width"),
+            "{name}: outer marker width"
+        );
+        assert_eq!(
+            document.marker.section_marker_width,
+            metadata_number(marker, "section_marker_width"),
+            "{name}: section marker width"
+        );
+
+        let regions = metadata_array(&metadata, "regions");
+        assert_eq!(
+            regions.len(),
+            document.regions.len(),
+            "{name}: metadata regions"
+        );
+        let mut previous_end = 0;
+        for (region_index, (region, expected_region)) in
+            document.regions.iter().zip(regions.iter()).enumerate()
+        {
+            assert_eq!(
+                metadata_number(expected_region, "region_id"),
+                region_index,
+                "{name}: region {region_index} metadata id"
+            );
+            let terms = metadata_array(expected_region, "terms");
+            assert_eq!(
+                terms.len(),
+                metadata_number(expected_region, "term_count"),
+                "{name}: region {region_index} metadata term count"
+            );
+            assert_eq!(
+                region.terms.len(),
+                terms.len(),
+                "{name}: region {region_index} term count"
+            );
+            assert_eq!(
+                &input[previous_end..region.source_range.start],
+                &document.source[previous_end..region.source_range.start],
+                "{name}: region {region_index} prefix outside bytes"
+            );
+            previous_end = region.source_range.end;
+
+            for (ordinal, (term, expected_term)) in
+                region.terms.iter().zip(terms.iter()).enumerate()
+            {
+                assert_eq!(
+                    term.ordinal,
+                    metadata_number(expected_term, "ordinal"),
+                    "{name}: region {region_index} term {ordinal} ordinal"
+                );
+                assert_eq!(
+                    term.kind,
+                    expected_term_kind(expected_term),
+                    "{name}: region {region_index} term {ordinal} kind"
+                );
+                assert_eq!(
+                    term.label,
+                    metadata_string(expected_term, "label"),
+                    "{name}: region {region_index} term {ordinal} label"
+                );
+                assert_eq!(
+                    term.synthetic_separator_eol_removed,
+                    metadata_bool(expected_term, "synthetic_separator_eol"),
+                    "{name}: region {region_index} term {ordinal} synthetic separator"
+                );
+                let artifact = fs::read(metadata_path(&metadata_string(expected_term, "path")))
+                    .unwrap_or_else(|error| {
+                        panic!("{name}: region {region_index} term {ordinal}: {error}")
+                    });
+                assert_eq!(
+                    &*term.logical_bytes,
+                    artifact.as_slice(),
+                    "{name}: region {region_index} term {ordinal} logical bytes"
+                );
+            }
+        }
+        assert_eq!(
+            &input[previous_end..],
+            &document.source[previous_end..],
+            "{name}: suffix outside bytes"
+        );
+
+        let resolved_artifact = metadata_field(metadata_field(&metadata, "artifacts"), "resolved");
+        let resolved_path = metadata_string(resolved_artifact, "path");
+        let resolved = fs::read(metadata_path(&resolved_path))
+            .unwrap_or_else(|error| panic!("{name}: resolved artifact: {error}"));
+        assert_eq!(
+            materialize_scaffold(&document).unwrap(),
+            resolved,
+            "{name}: resolved scaffold"
+        );
+        assert_eq!(
+            root.join("input.snapshot"),
+            input_path,
+            "{name}: corpus root/input path"
+        );
+    }
+
+    #[test]
+    fn metadata_driven_supported_corpus_is_exhaustive() {
+        let cases = corpus_cases();
+        let supported = cases
+            .iter()
+            .filter(|case| metadata_string(case, "status") == "supported")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            supported.len(),
+            8,
+            "index must enumerate all supported corpus cases"
+        );
+        for case in supported {
+            assert_supported_metadata_case(case);
+        }
+    }
+
+    #[test]
+    fn metadata_driven_reference_corpus_is_rejected() {
+        let cases = corpus_cases();
+        let references = cases
+            .iter()
+            .filter(|case| metadata_string(case, "status") == "reference")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            references.len(),
+            8,
+            "index must enumerate all reference corpus cases"
+        );
+        for index_case in references {
+            let name = metadata_string(index_case, "case_name");
+            let metadata = case_metadata(index_case);
+            let disposition = metadata_string(&metadata, "expected_disposition");
+            let input = fs::read(metadata_path(&metadata_string(index_case, "input_path")))
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            let error = match parse_snapshot(&input) {
+                Ok(_) => panic!("{name}: reference input was accepted"),
+                Err(error) => error,
+            };
+            let rendered = error.to_string();
+            assert!(
+                !rendered.is_empty(),
+                "{name}: rejection had no useful message"
+            );
+            match disposition.as_str() {
+                "unsupported_style" => assert!(
+                    matches!(
+                        error,
+                        DomainError::UnsupportedStyle { .. } | DomainError::InvalidInput { .. }
+                    ),
+                    "{name}: expected unsupported-style or malformed rejection, got {error:?}"
+                ),
+                "malformed" => assert!(
+                    matches!(
+                        error,
+                        DomainError::InvalidInput { .. } | DomainError::UnsupportedStyle { .. }
+                    ),
+                    "{name}: expected malformed/reference rejection, got {error:?}"
+                ),
+                "wrong_arity" | "unsupported_or_malformed" | "reference_only" => assert!(
+                    matches!(
+                        error,
+                        DomainError::InvalidInput { .. } | DomainError::UnsupportedStyle { .. }
+                    ),
+                    "{name}: expected rejection, got {error:?}"
+                ),
+                other => panic!("{name}: unknown expected disposition {other:?}"),
+            }
+            match error {
+                DomainError::InvalidInput {
+                    region_index,
+                    byte_offset,
+                    ..
+                } => assert!(
+                    region_index.is_some() || byte_offset.is_some(),
+                    "{name}: malformed rejection lacked region/offset context: {rendered}"
+                ),
+                DomainError::UnsupportedStyle { .. } => {
+                    assert!(
+                        rendered.contains("unsupported snapshot style"),
+                        "{name}: {rendered}"
+                    );
+                }
+                _ => unreachable!("the category assertion above admits only parser errors"),
+            }
+        }
+    }
+
+    #[allow(dead_code)]
     fn expected_case(name: &str) -> Vec<Vec<ExpectedTerm>> {
         let normal = |labels: &[&'static str]| {
             labels
@@ -855,6 +1344,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(dead_code)]
     fn supported_corpus_parse_and_scaffold() {
         let cases = [
             "snapshot-basic-2-sided",
@@ -867,7 +1357,7 @@ mod tests {
             "snapshot-empty-term-or-deletion",
         ];
         for case in cases {
-            let expected = expected_case(case);
+            let expected = legacy_expected_case(case);
             let expected_ranges = expected_case_ranges(case);
             let root = corpus_root().join("cases").join(case);
             let input = fs::read(root.join("input.snapshot")).unwrap();
@@ -999,6 +1489,485 @@ mod tests {
                         }
                     ),
                     "reference {name} lacked region/offset context: {error:?}"
+                );
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Copy)]
+    struct ExpectedTerm {
+        kind: TermKind,
+        label: &'static str,
+        synthetic: bool,
+    }
+
+    #[allow(dead_code)]
+    fn legacy_expected_case(name: &str) -> Vec<Vec<ExpectedTerm>> {
+        let normal = |labels: &[&'static str]| {
+            labels
+                .iter()
+                .enumerate()
+                .map(|(index, label)| ExpectedTerm {
+                    kind: if index % 2 == 1 {
+                        TermKind::Base
+                    } else {
+                        TermKind::Side
+                    },
+                    label,
+                    synthetic: false,
+                })
+                .collect::<Vec<_>>()
+        };
+        match name {
+            "snapshot-basic-2-sided" => vec![normal(&[" side #1", " base", " side #2"])],
+            "snapshot-3-sided-with-multiple-bases" => vec![vec![
+                ExpectedTerm {
+                    kind: TermKind::Side,
+                    label: " side #1",
+                    synthetic: false,
+                },
+                ExpectedTerm {
+                    kind: TermKind::Base,
+                    label: " base #1",
+                    synthetic: false,
+                },
+                ExpectedTerm {
+                    kind: TermKind::Side,
+                    label: " side #2",
+                    synthetic: false,
+                },
+                ExpectedTerm {
+                    kind: TermKind::Base,
+                    label: " base #2",
+                    synthetic: false,
+                },
+                ExpectedTerm {
+                    kind: TermKind::Side,
+                    label: " side #3",
+                    synthetic: false,
+                },
+            ]],
+            "snapshot-multiple-regions" | "snapshot-long-markers-and-marker-like-content" => vec![
+                normal(&[" side #1", " base", " side #2"]),
+                normal(&[" side #1", " base", " side #2"]),
+            ],
+            "snapshot-missing-final-newlines" => vec![
+                normal(&[" side #1", " base", " side #2"]),
+                vec![
+                    ExpectedTerm {
+                        kind: TermKind::Side,
+                        label: " side #1",
+                        synthetic: true,
+                    },
+                    ExpectedTerm {
+                        kind: TermKind::Base,
+                        label: " base (no terminating newline)",
+                        synthetic: true,
+                    },
+                    ExpectedTerm {
+                        kind: TermKind::Side,
+                        label: " side #2 (no terminating newline)",
+                        synthetic: true,
+                    },
+                ],
+            ],
+            "snapshot-crlf" => vec![normal(&[" side #1", " base", " side #2"])],
+            "snapshot-custom-labels" => vec![vec![
+                ExpectedTerm {
+                    kind: TermKind::Side,
+                    label: " side 1 conflict label",
+                    synthetic: false,
+                },
+                ExpectedTerm {
+                    kind: TermKind::Base,
+                    label: " base conflict label",
+                    synthetic: false,
+                },
+                ExpectedTerm {
+                    kind: TermKind::Side,
+                    label: " side 2 conflict label",
+                    synthetic: false,
+                },
+            ]],
+            "snapshot-empty-term-or-deletion" => vec![normal(&[" side #1", " base", " side #2"])],
+            _ => panic!("unknown corpus case {name}"),
+        }
+    }
+
+    #[test]
+    #[allow(dead_code)]
+    fn supported_corpus_parse_and_scaffold_legacy_expectations() {
+        let cases = [
+            "snapshot-basic-2-sided",
+            "snapshot-3-sided-with-multiple-bases",
+            "snapshot-multiple-regions",
+            "snapshot-long-markers-and-marker-like-content",
+            "snapshot-missing-final-newlines",
+            "snapshot-crlf",
+            "snapshot-custom-labels",
+            "snapshot-empty-term-or-deletion",
+        ];
+        for case in cases {
+            let expected = legacy_expected_case(case);
+            let expected_ranges = expected_case_ranges(case);
+            let root = corpus_root().join("cases").join(case);
+            let input = fs::read(root.join("input.snapshot")).unwrap();
+            let document = parse_snapshot(&input).unwrap_or_else(|error| panic!("{case}: {error}"));
+            assert_eq!(
+                document.regions.len(),
+                expected.len(),
+                "{case}: region count"
+            );
+            assert_eq!(
+                document.source.as_ref(),
+                input.as_slice(),
+                "{case}: source copy"
+            );
+            for (region_index, ((region, expected_terms), &(expected_start, expected_end))) in
+                document
+                    .regions
+                    .iter()
+                    .zip(expected.iter())
+                    .zip(expected_ranges.iter())
+                    .enumerate()
+            {
+                assert_eq!(
+                    (region.source_range.start, region.source_range.end),
+                    (expected_start, expected_end),
+                    "{case}: region {region_index} range"
+                );
+                assert_eq!(
+                    region.terms.len(),
+                    expected_terms.len(),
+                    "{case}: region {region_index}"
+                );
+                for (ordinal, (term, expected_term)) in
+                    region.terms.iter().zip(expected_terms.iter()).enumerate()
+                {
+                    assert_eq!(
+                        term.ordinal, ordinal,
+                        "{case}: region {region_index} ordinal"
+                    );
+                    assert_eq!(
+                        term.kind, expected_term.kind,
+                        "{case}: region {region_index} kind"
+                    );
+                    assert_eq!(
+                        term.label, expected_term.label,
+                        "{case}: region {region_index} label"
+                    );
+                    assert_eq!(
+                        term.synthetic_separator_eol_removed, expected_term.synthetic,
+                        "{case}: region {region_index} synthetic"
+                    );
+                    let artifact = fs::read(root.join(format!(
+                        "regions/region-{region_index:03}/term-{ordinal:03}.term"
+                    )))
+                    .unwrap();
+                    assert_eq!(
+                        &*term.logical_bytes,
+                        artifact.as_slice(),
+                        "{case}: region {region_index} term {ordinal}"
+                    );
+                }
+            }
+            assert_eq!(
+                materialize_scaffold(&document).unwrap(),
+                fs::read(root.join("resolved")).unwrap(),
+                "{case}: resolved"
+            );
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct GeneratedCase {
+        input: Vec<u8>,
+        expected_terms: Vec<Vec<(TermKind, String, Vec<u8>)>>,
+        expected_resolved: Vec<u8>,
+        region_ranges: Vec<(usize, usize)>,
+        close_offsets: Vec<usize>,
+        first_header_ranges: Vec<(usize, usize)>,
+        base_header_offsets: Vec<usize>,
+        width: usize,
+    }
+
+    #[derive(Clone, Copy)]
+    struct DeterministicRng(u64);
+
+    impl DeterministicRng {
+        fn new(seed: u64) -> Self {
+            Self(seed)
+        }
+
+        fn next(&mut self) -> u8 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (self.0 >> 32) as u8
+        }
+
+        fn range(&mut self, upper: usize) -> usize {
+            usize::from(self.next()) % upper
+        }
+    }
+
+    fn generated_case(case_index: usize) -> GeneratedCase {
+        let mut rng = DeterministicRng::new(0x5eed_0000_u64 + case_index as u64);
+        let width = if case_index == 0 {
+            16
+        } else {
+            7 + rng.range(10)
+        };
+        let region_count = if case_index == 0 { 2 } else { 1 + rng.range(3) };
+        let term_count = if case_index == 0 { 5 } else { 2 + rng.range(6) };
+        let crlf = case_index % 2 == 0;
+        let synthetic_last = case_index % 3 == 0;
+        let eol: &[u8] = if crlf { b"\r\n" } else { b"\n" };
+        let mut input = Vec::new();
+        let mut expected_resolved = Vec::new();
+        let mut expected_terms = Vec::new();
+        let mut region_ranges = Vec::new();
+        let mut close_offsets = Vec::new();
+        let mut first_header_ranges = Vec::new();
+        let mut base_header_offsets = Vec::new();
+
+        for region_index in 0..region_count {
+            input.extend_from_slice(format!("outside-before-{region_index}").as_bytes());
+            input.extend_from_slice(eol);
+            expected_resolved
+                .extend_from_slice(format!("outside-before-{region_index}").as_bytes());
+            expected_resolved.extend_from_slice(eol);
+
+            let region_start = input.len();
+            input.extend(std::iter::repeat_n(b'<', width));
+            input.extend_from_slice(b" opening");
+            input.extend_from_slice(eol);
+            let synthetic = synthetic_last && region_index + 1 == region_count;
+            let mut region_terms = Vec::new();
+            for ordinal in 0..term_count {
+                let kind = if ordinal % 2 == 1 {
+                    TermKind::Base
+                } else {
+                    TermKind::Side
+                };
+                let label = format!(" generated-{region_index}-{ordinal}");
+                let header_start = input.len();
+                input.extend(std::iter::repeat_n(
+                    match kind {
+                        TermKind::Side => b'+',
+                        TermKind::Base => b'-',
+                    },
+                    width,
+                ));
+                input.extend_from_slice(label.as_bytes());
+                input.extend_from_slice(eol);
+                if ordinal == 0 {
+                    first_header_ranges.push((header_start, input.len()));
+                }
+                if kind == TermKind::Base && ordinal == 1 {
+                    base_header_offsets.push(header_start);
+                }
+
+                let mut logical = Vec::new();
+                if region_index == 0 && ordinal == 0 {
+                    logical.extend(std::iter::repeat_n(b'<', width - 1));
+                    logical.extend_from_slice(b" marker-like\n");
+                }
+                for _ in 0..(rng.range(14)) {
+                    logical.push(match rng.range(11) {
+                        0 => 0,
+                        1 => 1,
+                        2 => b'a',
+                        3 => b'Z',
+                        4 => b' ',
+                        5 => b'\n',
+                        6 => b'\r',
+                        7 => 0x7f,
+                        8 => 0x80,
+                        9 => 0xfe,
+                        _ => 0xff,
+                    });
+                }
+                // With LF section separators, a terminal payload CR would be
+                // indistinguishable from the CR in a CRLF terminator. Keep the
+                // generated binary coverage while making the boundary explicit.
+                if eol == b"\n" && logical.last() == Some(&b'\r') {
+                    logical.push(0);
+                }
+                if !synthetic && !logical.is_empty() && !logical.ends_with(eol) {
+                    logical.extend_from_slice(eol);
+                }
+                input.extend_from_slice(&logical);
+                if synthetic || (!logical.is_empty() && !logical.ends_with(eol)) {
+                    input.extend_from_slice(eol);
+                }
+                region_terms.push((kind, label, logical));
+            }
+
+            let close_offset = input.len();
+            close_offsets.push(close_offset);
+            input.extend(std::iter::repeat_n(b'>', width));
+            input.extend_from_slice(b" closing");
+            if !synthetic {
+                input.extend_from_slice(eol);
+            }
+            region_ranges.push((region_start, input.len()));
+            expected_resolved.extend_from_slice(&region_terms[0].2);
+            expected_terms.push(region_terms);
+
+            if !synthetic {
+                input.extend_from_slice(format!("outside-after-{region_index}").as_bytes());
+                input.extend_from_slice(eol);
+                expected_resolved
+                    .extend_from_slice(format!("outside-after-{region_index}").as_bytes());
+                expected_resolved.extend_from_slice(eol);
+            }
+        }
+
+        GeneratedCase {
+            input,
+            expected_terms,
+            expected_resolved,
+            region_ranges,
+            close_offsets,
+            first_header_ranges,
+            base_header_offsets,
+            width,
+        }
+    }
+
+    fn assert_generated_case(case_index: usize, generated: &GeneratedCase) {
+        let document = parse_snapshot(&generated.input)
+            .unwrap_or_else(|error| panic!("generated case {case_index} should parse: {error}"));
+        assert_eq!(
+            document.regions.len(),
+            generated.expected_terms.len(),
+            "generated case {case_index}: regions"
+        );
+        assert_eq!(
+            document.marker.outer_marker_width, generated.width,
+            "generated case {case_index}: width"
+        );
+        for (region_index, (region, expected_terms)) in document
+            .regions
+            .iter()
+            .zip(&generated.expected_terms)
+            .enumerate()
+        {
+            assert_eq!(
+                region.source_range.start, generated.region_ranges[region_index].0,
+                "generated case {case_index}: region {region_index} start"
+            );
+            assert_eq!(
+                region.source_range.end, generated.region_ranges[region_index].1,
+                "generated case {case_index}: region {region_index} end"
+            );
+            assert_eq!(
+                region.terms.len(),
+                expected_terms.len(),
+                "generated case {case_index}: region {region_index} term count"
+            );
+            for (ordinal, (term, (kind, label, logical))) in
+                region.terms.iter().zip(expected_terms).enumerate()
+            {
+                assert_eq!(
+                    term.ordinal, ordinal,
+                    "generated case {case_index}: region {region_index} term {ordinal} ordinal"
+                );
+                assert_eq!(
+                    term.kind, *kind,
+                    "generated case {case_index}: region {region_index} term {ordinal} kind"
+                );
+                assert_eq!(
+                    &term.label, label,
+                    "generated case {case_index}: region {region_index} term {ordinal} label"
+                );
+                assert_eq!(
+                    &*term.logical_bytes, logical,
+                    "generated case {case_index}: region {region_index} term {ordinal} bytes"
+                );
+                assert_eq!(
+                    term.synthetic_separator_eol_removed,
+                    region_index + 1 == generated.expected_terms.len() && case_index % 3 == 0,
+                    "generated case {case_index}: region {region_index} term {ordinal} synthetic"
+                );
+            }
+        }
+        assert_eq!(
+            materialize_scaffold(&document).unwrap(),
+            generated.expected_resolved,
+            "generated case {case_index}: scaffold"
+        );
+        let mut previous_end = 0;
+        for (region_index, region) in document.regions.iter().enumerate() {
+            assert_eq!(
+                &generated.input[previous_end..region.source_range.start],
+                &document.source[previous_end..region.source_range.start],
+                "generated case {case_index}: region {region_index} prefix"
+            );
+            previous_end = region.source_range.end;
+        }
+        assert_eq!(
+            &generated.input[previous_end..],
+            &document.source[previous_end..],
+            "generated case {case_index}: suffix"
+        );
+    }
+
+    fn assert_generated_rejected(case_index: usize, mutation: &str, input: &[u8]) {
+        assert!(
+            parse_snapshot(input).is_err(),
+            "generated case {case_index} mutation {mutation} was accepted"
+        );
+    }
+
+    #[test]
+    fn deterministic_generated_snapshot_properties_cover_arbitrary_bytes_and_structure() {
+        for case_index in 0..96 {
+            let generated = generated_case(case_index);
+            assert_generated_case(case_index, &generated);
+
+            for (region_index, &close_offset) in generated.close_offsets.iter().enumerate() {
+                let mut truncated = generated.input.clone();
+                truncated.remove(close_offset + generated.width - 1);
+                assert_generated_rejected(
+                    case_index,
+                    &format!("truncate close region {region_index}"),
+                    &truncated,
+                );
+
+                let mut widened = generated.input.clone();
+                widened.insert(close_offset + generated.width, b'>');
+                assert_generated_rejected(
+                    case_index,
+                    &format!("change close width region {region_index}"),
+                    &widened,
+                );
+            }
+
+            for (region_index, &(header_start, header_end)) in
+                generated.first_header_ranges.iter().enumerate()
+            {
+                let mut missing_header = generated.input.clone();
+                missing_header.drain(header_start..header_end);
+                assert_generated_rejected(
+                    case_index,
+                    &format!("remove first section header region {region_index}"),
+                    &missing_header,
+                );
+            }
+
+            for (region_index, &base_offset) in generated.base_header_offsets.iter().enumerate() {
+                let mut mixed_style = generated.input.clone();
+                for byte in &mut mixed_style[base_offset..base_offset + generated.width] {
+                    *byte = b'|';
+                }
+                assert_generated_rejected(
+                    case_index,
+                    &format!("mixed structural header region {region_index}"),
+                    &mixed_style,
                 );
             }
         }
