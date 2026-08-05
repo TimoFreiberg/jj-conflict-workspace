@@ -52,7 +52,7 @@ Logical term bytes are the bytes between a section header and the next section h
 - All supported corpus inputs parse and reconstruct to their checked-in `resolved` bytes.
 - The parser preserves every declared term’s bytes, ordinal, kind, label, and synthetic-separator fact.
 - CRLF and no-final-newline fixtures remain byte-exact.
-- Reference fixtures are rejected with the intended unsupported/malformed/wrong-arity distinction where the contract makes that distinction possible.
+- Reference fixtures are rejected with the intended unsupported/malformed distinction where the contract makes that distinction possible. Structurally valid snapshot inputs have arbitrary arity; the checked-in `wrong-arity` bytes remain rejected only because they contain unsupported diff structure and do not satisfy the snapshot section sequence. Expected-side-count validation belongs to a future caller.
 - `cargo fmt --check`, `cargo check`, and `cargo test` pass.
 
 ## Handoff

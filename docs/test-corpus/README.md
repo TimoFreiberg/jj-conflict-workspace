@@ -25,6 +25,11 @@ literal escapes were normalized as documented in each `case.json`.
 - `reference/<name>/input.snapshot` and its `case.json` document rejected or
   reference-only formats: default diff, Git/diff3, malformed, wrong-arity, and
   whitespace-tolerant inputs. They intentionally have no resolved scaffold.
+  The parser API has no expected-side-count argument: valid snapshot inputs
+  have arbitrary arity, while the checked-in `wrong-arity` bytes are rejected
+  because they independently contain unsupported diff structure and do not
+  satisfy the snapshot section sequence. Expected-side-count validation is a
+  future caller concern.
 - `index.json` lists all cases; each case's `case.json` artifact map is
   authoritative for byte lengths, hashes, EOL mode, final-newline state, and
   synthetic separator-EOL facts.

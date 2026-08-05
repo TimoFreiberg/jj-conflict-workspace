@@ -176,23 +176,19 @@ mod public_api_tests {
     }
 
     #[test]
-    fn pure_boundaries_are_callable_placeholders() {
-        let parsed = parse_snapshot(b"anything");
+    fn pure_boundaries_expose_implemented_core_and_deferred_apply() {
         assert!(matches!(
-            parsed,
-            Err(DomainError::NotImplemented {
-                operation: "parse_snapshot"
-            })
+            parse_snapshot(b"anything"),
+            Err(DomainError::InvalidInput { .. })
         ));
 
-        let document =
-            ParsedDocument::new(Vec::<u8>::new(), vec![], SnapshotMarker::default()).unwrap();
-        assert!(matches!(
-            materialize_scaffold(&document),
-            Err(DomainError::NotImplemented {
-                operation: "materialize_scaffold"
-            })
-        ));
+        let source =
+            b"prefix\n<<<<<<< open\n+++++++ side\nx\n------- base\ny\n>>>>>>> close\nsuffix\n";
+        let document = parse_snapshot(source).unwrap();
+        assert_eq!(
+            materialize_scaffold(&document).unwrap(),
+            b"prefix\nx\nsuffix\n"
+        );
 
         let source = Vec::<u8>::new();
         let manifest = Manifest::empty(SourceIdentity::new("source"), source.len());

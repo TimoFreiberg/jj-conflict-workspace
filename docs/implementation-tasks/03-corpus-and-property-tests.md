@@ -8,7 +8,7 @@ You are implementing the third chunk of `jj-conflict-workspace`. Tasks 01–02 e
 
 This tool must never silently produce misleading term files or install an unsafe resolution. The parser is byte-oriented and has subtle cases: arbitrary marker widths, arbitrary numbers of terms/bases, multiple regions, empty terms, CRLF, missing final newlines, custom labels, and marker-like payload content. The vendored corpus under `docs/test-corpus/` is self-contained, pinned to JJ commit `6b27ec86af32ff84c209367d2710d234cb192622`, and its validator is authoritative. Do not fetch a live JJ checkout or alter fixture bytes/metadata unless a genuine defect is found and documented.
 
-The supported cases are the eight `snapshot-*` cases listed in `docs/test-corpus/README.md`. The reference cases intentionally cover default diff, Git/diff3, malformed, wrong-arity, and whitespace-stripped formats and should remain rejected by v1.
+The supported cases are the eight `snapshot-*` cases listed in `docs/test-corpus/README.md`. The reference cases intentionally cover default diff, Git/diff3, malformed, wrong-arity, and whitespace-stripped formats and should remain rejected by v1. Valid snapshot inputs have arbitrary term arity; the checked-in `wrong-arity` bytes are rejected because they contain independently unsupported diff structure and do not satisfy the snapshot section sequence, not because v1 enforces an expected side count. Expected-side-count validation belongs to a future caller.
 
 ## Scope
 

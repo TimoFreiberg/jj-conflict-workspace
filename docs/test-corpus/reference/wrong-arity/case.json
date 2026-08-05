@@ -3,7 +3,7 @@
   "case_name": "wrong-arity",
   "status": "reference",
   "style": "reference",
-  "description": "A valid two-sided-looking snapshot-shaped hunk supplied where three sides are expected.",
+  "description": "A diff-style hunk that looks two-sided but does not satisfy the v1 snapshot section sequence; its upstream expected-side-count disposition is provenance only.",
   "source": {
     "path": "lib/tests/test_conflicts.rs",
     "symbol": "test_parse_conflict_wrong_arity",
@@ -19,9 +19,9 @@
     "eof_display_marker_removal": "The upstream [EOF] display marker is metadata only and is not stored in input bytes.",
     "label_substitutions": "No volatile revision, operation, or commit labels were copied; stable library labels are retained."
   },
-  "expected_disposition": "wrong_arity",
-  "reason": "The conflict has two side sections but the caller expects three sides.",
-  "upstream_parser_behavior": "rejected_for_requested_arity",
+  "expected_disposition": "unsupported_or_malformed",
+  "reason": "The bytes contain a full-width diff continuation and do not satisfy the v1 snapshot section sequence; v1 does not enforce an expected side count.",
+  "upstream_parser_behavior": "rejected_for_unsupported_structure",
   "expected_arity": {
     "expected_sides": 3,
     "actual_sides": 2
