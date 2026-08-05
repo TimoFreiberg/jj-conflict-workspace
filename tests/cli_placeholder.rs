@@ -273,3 +273,133 @@ fn help_succeeds_and_no_command_is_a_stable_error() {
     );
     assert_eq!(snapshot_tree(corpus), before);
 }
+
+#[cfg(unix)]
+fn prepared_apply_fixture(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let root = unique_temp_dir(name);
+    fs::create_dir(root.join(".jj")).unwrap();
+    let source_path = root.join("source");
+    let snapshot = b"prefix\n<<<<<<< opening\n+++++++ side\nleft\n------- base\nright\n>>>>>>> closing\nsuffix\n";
+    fs::write(&source_path, snapshot).unwrap();
+    let fake_bin = root.join("bin");
+    fs::create_dir(&fake_bin).unwrap();
+    fake_jj(&fake_bin, snapshot, "ok");
+    let output_dir = root.join("output");
+    fs::create_dir(&output_dir).unwrap();
+    let output = Command::new(binary())
+        .current_dir(&root)
+        .env(
+            "PATH",
+            format!("{}:{}", fake_bin.display(), env::var("PATH").unwrap()),
+        )
+        .env("JCW_SNAPSHOT", fake_bin.join("snapshot.bin"))
+        .args([
+            std::ffi::OsString::from("prepare"),
+            std::ffi::OsString::from("--file"),
+            std::ffi::OsString::from("source"),
+            std::ffi::OsString::from("--output-dir"),
+            output_dir.as_os_str().to_owned(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let workspace = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim());
+    (root, source_path, workspace)
+}
+
+#[cfg(unix)]
+fn apply_command(workspace: &Path, extra: &[&str]) -> std::process::Output {
+    let mut args = vec![
+        std::ffi::OsString::from("apply"),
+        std::ffi::OsString::from("--resolved-file"),
+        workspace.join("resolved").as_os_str().to_owned(),
+    ];
+    args.extend(extra.iter().map(std::ffi::OsString::from));
+    Command::new(binary()).args(args).output().unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn apply_dry_run_and_write_preserve_workspace() {
+    let (root, source_path, workspace) = prepared_apply_fixture("apply-success");
+    let original = fs::read(&source_path).unwrap();
+    let original_mode = fs::metadata(&source_path).unwrap().permissions().mode() & 0o777;
+    fs::write(workspace.join("resolved"), b"prefix\nchanged\nsuffix\n").unwrap();
+
+    let dry_run = apply_command(&workspace, &[]);
+    assert!(
+        dry_run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry_run.stderr)
+    );
+    assert!(String::from_utf8_lossy(&dry_run.stdout).contains("No files were modified (dry-run)."));
+    assert!(String::from_utf8_lossy(&dry_run.stdout).contains("-left"));
+    assert_eq!(fs::read(&source_path).unwrap(), original);
+
+    let written = apply_command(&workspace, &["--write"]);
+    assert!(
+        written.status.success(),
+        "{}",
+        String::from_utf8_lossy(&written.stderr)
+    );
+    assert!(String::from_utf8_lossy(&written.stdout).contains("Applied 1 change(s)"));
+    assert_eq!(
+        fs::read(&source_path).unwrap(),
+        b"prefix\nchanged\nsuffix\n"
+    );
+    assert_eq!(
+        fs::metadata(&source_path).unwrap().permissions().mode() & 0o777,
+        original_mode
+    );
+    assert!(workspace.join("manifest.json").is_file());
+    assert!(workspace.join("resolved").is_file());
+    assert!(workspace.join("regions/region-000/term-000.term").is_file());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn apply_explicit_manifest_and_stale_source_are_guarded() {
+    let (root, source_path, workspace) = prepared_apply_fixture("apply-guards");
+    fs::copy(
+        workspace.join("manifest.json"),
+        workspace.join("manifest-copy.json"),
+    )
+    .unwrap();
+    fs::write(workspace.join("resolved"), b"prefix\nchanged\nsuffix\n").unwrap();
+    fs::write(&source_path, b"source was changed\n").unwrap();
+
+    let output = apply_command(
+        &workspace,
+        &[
+            "--manifest",
+            workspace.join("manifest-copy.json").to_str().unwrap(),
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("stale source"));
+    assert_eq!(fs::read(&source_path).unwrap(), b"source was changed\n");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn apply_rejects_marker_bearing_resolution_without_writing() {
+    let (root, source_path, workspace) = prepared_apply_fixture("apply-invalid");
+    let original = fs::read(&source_path).unwrap();
+    fs::write(
+        workspace.join("resolved"),
+        b"prefix\n<<<<<<< opening\nchanged\n>>>>>>> closing\nsuffix\n",
+    )
+    .unwrap();
+
+    let output = apply_command(&workspace, &["--write"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid resolved file"));
+    assert_eq!(fs::read(&source_path).unwrap(), original);
+    fs::remove_dir_all(root).unwrap();
+}

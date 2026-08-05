@@ -4,12 +4,14 @@
 //! process execution, serialization, and merge policy are deferred to later
 //! layers; this crate only defines their stable contracts.
 
+pub mod apply;
 pub mod cli;
 pub mod core;
 pub mod domain;
 pub mod error;
 mod prepare;
 
+pub use apply::ApplyReport;
 pub use cli::{ApplyOptions, Command, PrepareOptions, USAGE, parse_args};
 pub use core::{materialize_scaffold, parse_snapshot, render_unified_diff, validate_apply};
 pub use domain::{

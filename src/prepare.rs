@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -519,16 +520,10 @@ fn restrict_file(_file: &File, _path: &Path) -> io::Result<()> {
 }
 
 pub(crate) fn sha256(input: &[u8]) -> [u8; 32] {
-    let mut state = [
-        0x6a09e667u32,
-        0xbb67ae85,
-        0x3c6ef372,
-        0xa54ff53a,
-        0x510e527f,
-        0x9b05688c,
-        0x1f83d9ab,
-        0x5be0cd19,
-    ];
+    Sha256::digest(input).into()
+}
+
+/*
     let bit_len = (input.len() as u64).wrapping_mul(8);
     let padded_len = (input.len() + 9).div_ceil(64) * 64;
     let mut padded = vec![0u8; padded_len];
@@ -609,6 +604,7 @@ pub(crate) fn sha256(input: &[u8]) -> [u8; 32] {
     }
     digest
 }
+*/
 
 #[cfg(test)]
 mod tests {
