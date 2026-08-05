@@ -8,6 +8,7 @@ pub mod cli;
 pub mod core;
 pub mod domain;
 pub mod error;
+mod prepare;
 
 pub use cli::{ApplyOptions, Command, PrepareOptions, USAGE, parse_args};
 pub use core::{materialize_scaffold, parse_snapshot, validate_apply};
@@ -17,6 +18,7 @@ pub use domain::{
     ParsedDocument, Sha256Digest, SnapshotMarker, SnapshotStyle, SourceIdentity, Term, TermKind,
 };
 pub use error::{CliError, DomainError};
+pub use prepare::run as prepare;
 
 #[cfg(test)]
 mod domain_tests;
