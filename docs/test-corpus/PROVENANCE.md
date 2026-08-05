@@ -31,12 +31,12 @@ human provenance only; no fixture or validator requires the source checkout.
 
 - `snapshot-basic-2-sided`: `lib/tests/test_conflicts.rs::test_materialize_conflict_basic` lines 133-155
 - `snapshot-3-sided-with-multiple-bases`: `lib/tests/test_conflicts.rs::test_materialize_conflict_three_sides` lines 295-320
-- `snapshot-multiple-regions`: `lib/tests/test_conflicts.rs::test_materialize_parse_roundtrip` lines 483-580
-- `snapshot-long-markers-and-marker-like-content`: `lib/tests/test_conflicts.rs::test_update_conflict_from_content_with_long_markers` lines 1948-2107
+- `snapshot-multiple-regions`: adapted/generated Snapshot fixture from the Diff-style scenario in `lib/tests/test_conflicts.rs::test_materialize_parse_roundtrip` lines 483-580
+- `snapshot-long-markers-and-marker-like-content`: exact first library Snapshot assertion in `lib/tests/test_conflicts.rs::test_update_conflict_from_content_with_long_markers` lines 1993-2012; source term payloads at lines 1963-1979
 - `snapshot-missing-final-newlines`: `lib/tests/test_conflicts.rs::test_update_conflict_from_content_no_eol` lines 2164-2187
-- `snapshot-crlf`: `lib/src/conflicts.rs::test_materialize_conflict` lines 1335-1408
+- `snapshot-crlf`: generated from the `lib/src/conflicts.rs::test_materialize_conflict` matrix tuple at lines 1335-1408; the source asserts EOL preservation and round-trip, not literal expected bytes
 - `snapshot-custom-labels`: `lib/tests/test_conflicts.rs::test_materialize_conflict_with_labels` lines 854-908
-- `snapshot-empty-term-or-deletion`: `lib/tests/test_conflicts.rs::test_materialize_conflict_no_newlines_at_eof` lines 645-693
+- `snapshot-empty-term-or-deletion`: adapted/generated Snapshot fixture from the Diff-style empty-side behavior in `lib/tests/test_conflicts.rs::test_materialize_conflict_no_newlines_at_eof` lines 645-693
 - `default-diff-style-2-sided`: `lib/tests/test_conflicts.rs::test_materialize_conflict_basic` lines 89-106
 - `git-diff3-style-2-sided`: `lib/tests/test_conflicts.rs::test_parse_conflict_simple` lines 1104-1141
 - `malformed-missing-section-header`: `lib/tests/test_conflicts.rs::test_parse_conflict_snapshot_missing_header` lines 1546-1566
@@ -63,5 +63,5 @@ Copyright © The JJ contributors. JJ is distributed under the Apache License,
 Version 2.0. The complete applicable license text is vendored at
 `JJ-LICENSE-APACHE-2.0.txt`; the canonical license URL is
 <https://www.apache.org/licenses/LICENSE-2.0>. This attribution applies to the
-extracted JJ-derived fixture data. The surrounding corpus metadata and
-validator are project-local additions.
+extracted JJ-derived fixture data. The surrounding corpus metadata is a
+project-local addition.

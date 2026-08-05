@@ -20,7 +20,7 @@ The v1 design is:
 - All file content is bytes. Preserve LF, CRLF, mixed/no-EOL behavior exactly; never use text/EOL normalization.
 - No `jj-lib` dependency in v1. The installed `jj` CLI is the source of truth for materialization style; the helper owns parsing, artifacts, validation, and guarded installation. Ask the operator before adding any dependency. The requested property-testing dependency is `hegeltest`, but dependency selection/configuration belongs in a later task unless needed for this foundation.
 
-The checked-in corpus at `docs/test-corpus/` is authoritative for supported parser behavior. Run `python3 docs/test-corpus/validate.py` before and after changes; it must remain passing.
+The checked-in corpus at `docs/test-corpus/` is authoritative for supported parser behavior. The Rust corpus tests must remain passing before and after changes.
 
 ## Scope
 
@@ -41,7 +41,7 @@ The checked-in corpus at `docs/test-corpus/` is authoritative for supported pars
 - `cargo test` passes.
 - The library exposes a coherent API that later tasks can use without moving core logic into `main.rs`.
 - No external dependency is added without an explicit decision recorded in code/documentation; standard library is preferred.
-- Existing corpus files and validator are unchanged and `python3 docs/test-corpus/validate.py` passes.
+- Existing corpus files are unchanged and the Rust test suite passes.
 - Error output is written to stderr by the eventual shell boundary, but domain errors themselves remain testable without capturing process output.
 
 ## Handoff

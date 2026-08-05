@@ -37,7 +37,7 @@ Required checks:
 - Pure validation is callable and fully testable without filesystem/process access.
 - A valid proposal yields a deterministic plan/diff; every invalid proposal yields a typed actionable error and no plan.
 - Tests prove that unrelated edits are rejected even when the edited file is syntactically conflict-free.
-- `cargo fmt --check`, `cargo check`, `cargo test`, and `python3 docs/test-corpus/validate.py` pass.
+- `cargo fmt --check`, `cargo check`, and `cargo test` pass.
 
 ## Handoff
 

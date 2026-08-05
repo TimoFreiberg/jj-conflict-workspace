@@ -29,7 +29,6 @@ You are implementing the seventh and final chunk of `jj-conflict-untangler`. Tas
    - `cargo check`
    - `cargo test`
    - `cargo build --release`
-   - `python3 docs/test-corpus/validate.py`
    - representative manual CLI runs using a fake JJ command, including failure paths
 9. Inspect generated artifacts for accidental repository writes, secret/environment leakage, unstable absolute paths in checked-in files, and overly verbose output. Keep temporary workspaces out of version control and confirm `.gitignore`/equivalent coverage for build output only, not source fixtures.
 

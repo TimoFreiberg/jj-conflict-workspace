@@ -36,7 +36,7 @@ The supported cases are the eight `snapshot-*` cases listed in `docs/test-corpus
 - `cargo test` runs the full supported corpus suite and the negative/reference suite.
 - Property tests run reliably under normal `cargo test` without network access and with useful shrinking/minimal failing examples if hegeltest is used.
 - Tests cover arbitrary term arity rather than hardcoding three terms; specifically include five-term/two-base behavior.
-- `cargo fmt --check`, `cargo check`, and `python3 docs/test-corpus/validate.py` pass.
+- `cargo fmt --check`, `cargo check`, and `cargo test` pass.
 - Test names and failure messages identify case, region, and term indices.
 
 ## Handoff

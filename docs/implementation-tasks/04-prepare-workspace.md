@@ -45,7 +45,7 @@ v1’s source of truth is the installed `jj` executable, not a bundled `jj-lib` 
 - Integration tests use a fake `jj` executable/script in a temporary PATH or an injectable command runner; they never require a developer’s real JJ repository.
 - Tests cover success, missing executable, nonzero JJ exit, malformed/unsupported output, spaces in paths, CRLF/no-final-newline, arbitrary term counts, empty terms, and cleanup after partial failure.
 - Successful prepare leaves source bytes unchanged and produces artifacts that match the corpus semantics.
-- `cargo fmt --check`, `cargo check`, `cargo test`, and `python3 docs/test-corpus/validate.py` pass.
+- `cargo fmt --check`, `cargo check`, and `cargo test` pass.
 
 ## Handoff
 

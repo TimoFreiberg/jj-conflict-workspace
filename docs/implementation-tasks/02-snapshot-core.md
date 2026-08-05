@@ -16,7 +16,7 @@ Supported bytes grammar:
 - A marker-like payload line shorter than `W` is ordinary payload, not a marker. Long marker widths, custom labels, empty terms, CRLF, missing final newlines, and multiple regions are valid.
 - Structural `%`, backslash continuation, `|||||||`, `=======`, mixed header styles, malformed regions, and wrong-arity/reference examples are not v1-supported. Return a typed, actionable error with region/offset context.
 
-The corpus is authoritative. Its parser reference implementation in `docs/test-corpus/validate.py` documents byte iteration, line splitting, synthetic separator EOL handling, and scaffold reconstruction. Supported fixtures include:
+The corpus is authoritative. The Rust parser tests must cover byte iteration, line splitting, synthetic separator EOL handling, and scaffold reconstruction. Supported fixtures include:
 
 - `snapshot-basic-2-sided`
 - `snapshot-3-sided-with-multiple-bases`
@@ -53,7 +53,7 @@ Logical term bytes are the bytes between a section header and the next section h
 - The parser preserves every declared term’s bytes, ordinal, kind, label, and synthetic-separator fact.
 - CRLF and no-final-newline fixtures remain byte-exact.
 - Reference fixtures are rejected with the intended unsupported/malformed/wrong-arity distinction where the contract makes that distinction possible.
-- `cargo fmt --check`, `cargo check`, and `cargo test` pass; `python3 docs/test-corpus/validate.py` still passes.
+- `cargo fmt --check`, `cargo check`, and `cargo test` pass.
 
 ## Handoff
 

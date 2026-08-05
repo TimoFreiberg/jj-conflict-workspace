@@ -33,8 +33,20 @@ The future test loader can therefore read one input, enumerate each region's
 contiguous terms, and compare a materializer's resolved scaffold byte-for-byte.
 Supported cases use a deliberately narrower v1 grammar: snapshot section headers
 only (`+++++++` sides and `-------` bases), with the outer marker width inferred
-from the opening marker. Diff/Git inputs are references rather than supported
-behavior.
+from the opening marker. Structural `%`, backslash, `|||||||`, and `=======`
+headers are not accepted by v1. Upstream JJ accepts Diff and Git styles; those
+inputs are retained as references with `upstream_parser_behavior: accepted`, not
+as supported v1 behavior. Malformed and wrong-arity references represent v1
+rejection; upstream's low-level parser reports `None` and its update path may
+fall back to ordinary resolved content rather than raising an exception.
+
+Term files store logical term bytes. When a closing marker has no EOL, JJ's
+rendered sections contain a separator EOL; the corpus metadata records this with
+per-term `synthetic_separator_eol`. An empty term is an existing zero-byte
+artifact, distinct from a future missing-side representation. Some fixtures are
+explicitly `adapted_generated` or `generated_from_matrix_tuple` when the cited
+upstream test supplies behavior or a scenario rather than a literal expected
+Snapshot byte string.
 
 ## Exact-byte policy
 
@@ -46,16 +58,3 @@ files. A rendered section may contain JJ's synthetic separator EOL when a
 closing marker lacks its final newline; this is recorded per term in metadata.
 The long-marker case uses sixteen-character outer markers while preserving
 shorter marker-like payload lines.
-
-## Validation
-
-Run the standard-library-only validator from the repository root:
-
-```sh
-python3 docs/test-corpus/validate.py
-```
-
-It checks layout and hashes, snapshot semantics and reconstruction, byte
-properties, documentation/provenance, symlinks/git attributes, and absence of a
-live JJ checkout dependency. It never invokes JJ and requires no external
-checkout or Cargo dependency.

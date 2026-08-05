@@ -44,7 +44,7 @@ The manifest is normally the sibling `manifest.json`; `--manifest MANIFEST` is a
 - Integration tests cover default dry-run, `--write`, explicit/sibling manifest discovery, stale source between prepare and apply, invalid marker-bearing resolution, unrelated outside-region edits, no-op resolution, empty replacement, CRLF/no-final-newline, permission preservation, and simulated atomic-write failure.
 - Tests prove dry-run and every rejected apply leave source bytes unchanged.
 - Tests prove a successful write changes only the intended source file and leaves workspace artifacts available.
-- `cargo fmt --check`, `cargo check`, `cargo test`, and `python3 docs/test-corpus/validate.py` pass.
+- `cargo fmt --check`, `cargo check`, and `cargo test` pass.
 
 ## Handoff
 
