@@ -106,3 +106,45 @@ cargo build --release --no-default-features
 ```
 
 The test helper is an internal Cargo target used only by the feature-gated tests; it is not a user command and normal operation resolves the installed `jj` executable.
+
+## Releases
+
+Releases are published by the `Release jcw binaries` GitHub Actions workflow, which runs only when a maintainer pushes a version tag. To publish:
+
+1. Bump the `version` in `Cargo.toml` and commit the change.
+2. Push a tag that is exactly `v` followed by that version, for example `v0.1.0`, pointing at the commit that contains the bump: the workflow reads the package version from the tagged revision.
+3. Wait for the workflow to build, package, and publish the release.
+
+The tag must exactly match the Cargo package version; a mismatched tag fails validation before anything is published. Rerunning the same tag reconciles the existing release (assets are replaced or removed as needed) and never creates a duplicate release. The workflow owns the release assets: on every run it removes any asset outside the allowlist below, so keep ancillary files out of the release itself.
+
+Each release contains exactly these archives plus `SHA256SUMS`:
+
+| Target | Archive |
+| --- | --- |
+| x86_64 GNU/Linux (glibc) | `jcw-v0.1.0-x86_64-unknown-linux-gnu.tar.gz` |
+| ARM64 GNU/Linux (glibc) | `jcw-v0.1.0-aarch64-unknown-linux-gnu.tar.gz` |
+| Intel macOS | `jcw-v0.1.0-x86_64-apple-darwin.tar.gz` |
+| Apple Silicon macOS | `jcw-v0.1.0-aarch64-apple-darwin.tar.gz` |
+
+Replace `v0.1.0` in the filenames with the actual release tag. Linux artifacts are GNU/glibc builds; macOS artifacts are native Intel and Apple Silicon builds.
+
+`SHA256SUMS` lists the SHA-256 digest of each archive using basenames only. Download all assets into one directory and verify before installing:
+
+```text
+# GNU/Linux
+sha256sum -c SHA256SUMS
+
+# macOS
+shasum -a 256 -c SHA256SUMS
+```
+
+Then extract the archive for your platform and put the `jcw` binary on `PATH`:
+
+```text
+tar -xzf jcw-v0.1.0-aarch64-apple-darwin.tar.gz
+sudo install -m 0755 jcw /usr/local/bin/jcw
+```
+
+Releases bundle only the `jcw` binary, not JJ: `jcw prepare` invokes the installed `jj` executable at runtime, so install a compatible `jj` separately and keep it on `PATH`.
+
+Windows releases, 32-bit ARMv7 artifacts, crates.io publishing, and Homebrew packaging are not provided yet. macOS binaries are unsigned and unnotarized, so macOS may require local Gatekeeper approval before the first run.

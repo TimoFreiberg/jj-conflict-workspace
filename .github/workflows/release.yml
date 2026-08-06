@@ -1,0 +1,267 @@
+# Publishes the production `jcw` binary as a GitHub Release when a version
+# tag (`v*`) is pushed. The workflow:
+#   - runs only for pushed tags (never branches, pull requests, or manual runs),
+#   - validates that the tag is exactly `v<Cargo package version>`,
+#   - natively builds the four supported release targets,
+#   - packages one deterministic archive per target,
+#   - generates a basename-only SHA256SUMS manifest and verifies it,
+#   - reconciles the GitHub Release to exactly those assets.
+#
+# The release targets are explicit runner labels rather than `*-latest` so
+# architecture and image changes cannot silently alter artifacts:
+#   x86_64-unknown-linux-gnu  -> ubuntu-24.04       (x86_64 GNU/Linux)
+#   aarch64-unknown-linux-gnu -> ubuntu-24.04-arm   (native ARM64 GNU/Linux)
+#   x86_64-apple-darwin       -> macos-15-intel     (native Intel macOS)
+#   aarch64-apple-darwin      -> macos-15           (native Apple Silicon macOS)
+name: Release jcw binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+# Duplicate runs for one tag must not publish concurrently. Queued runs wait
+# for the in-flight run and then reconcile the same release idempotently.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate tag and package version
+    runs-on: ubuntu-24.04
+    outputs:
+      package_version: ${{ steps.validate.outputs.package_version }}
+      release_tag: ${{ steps.validate.outputs.release_tag }}
+    steps:
+      - name: Check out triggering revision
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Validate tag matches Cargo package version
+        id: validate
+        run: |
+          set -euo pipefail
+          metadata="$(cargo metadata --no-deps --format-version 1)"
+          package_version="$(printf '%s' "$metadata" | python3 -c 'import json,sys; pkgs=json.load(sys.stdin)["packages"]; assert len(pkgs) == 1, "expected exactly one package, found %d" % len(pkgs); print(pkgs[0]["version"])')"
+          release_tag="v${package_version}"
+          if [ "$GITHUB_REF_NAME" != "$release_tag" ]; then
+            echo "error: pushed tag ${GITHUB_REF_NAME} does not match Cargo package version ${package_version} (expected ${release_tag})" >&2
+            exit 1
+          fi
+          echo "package_version=${package_version}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    runs-on: ${{ matrix.runs-on }}
+    permissions:
+      # upload-artifact requires the `actions: write` scope. A job-level
+      # permissions block replaces (not merges) the workflow-level block, so
+      # contents must be repeated here.
+      contents: read
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runs-on: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runs-on: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            runs-on: macos-15-intel
+          - target: aarch64-apple-darwin
+            runs-on: macos-15
+    env:
+      # Validated in the validate job; never taken from the raw GitHub context.
+      RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+    steps:
+      - name: Check out triggering revision
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install target
+        run: rustup target add "${{ matrix.target }}"
+      - name: Build production binary
+        # --no-default-features excludes the feature-gated `jcw-fake-jj`
+        # test helper so only the user-facing `jcw` binary is produced.
+        run: cargo build --locked --release --no-default-features --bin jcw --target "${{ matrix.target }}"
+      - name: Package archive
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.target }}/release/jcw"
+          if [ ! -f "$binary" ] || [ ! -x "$binary" ]; then
+            echo "error: expected executable binary at ${binary}" >&2
+            exit 1
+          fi
+          archive="jcw-${RELEASE_TAG}-${{ matrix.target }}.tar.gz"
+          # Archive from the binary's parent directory so it contains a
+          # single top-level `jcw` basename with the executable bit kept.
+          tar -C "$(dirname "$binary")" -czf "$archive" "$(basename "$binary")"
+          echo "Packaged ${archive}"
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: jcw-release-${{ matrix.target }}
+          path: jcw-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+          # Intermediate CI artifact; the GitHub Release is the durable copy.
+          retention-days: 1
+
+  publish:
+    name: Publish GitHub Release
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      # Job-level permissions replace the workflow-level block: contents is
+      # needed for the GitHub Release API and actions: read for
+      # download-artifact.
+      contents: write
+      actions: read
+    env:
+      # Ephemeral per-run token; no long-lived secret is used.
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: jcw-release-*
+          path: release
+          # Flatten every artifact into the destination directory instead of
+          # one subdirectory per artifact.
+          merge-multiple: true
+      - name: Verify downloaded archive set
+        run: |
+          set -euo pipefail
+          cd release
+          expected=(
+            "jcw-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.gz"
+            "jcw-${RELEASE_TAG}-aarch64-unknown-linux-gnu.tar.gz"
+            "jcw-${RELEASE_TAG}-x86_64-apple-darwin.tar.gz"
+            "jcw-${RELEASE_TAG}-aarch64-apple-darwin.tar.gz"
+          )
+          for archive in "${expected[@]}"; do
+            if [ ! -f "$archive" ]; then
+              echo "error: missing archive ${archive}" >&2
+              exit 1
+            fi
+          done
+          shopt -s nullglob
+          for archive in jcw-*.tar.gz; do
+            if ! printf '%s\n' "${expected[@]}" | grep -Fxq "$archive"; then
+              echo "error: unexpected archive ${archive}" >&2
+              exit 1
+            fi
+          done
+          echo "Downloaded archive set is exactly the four expected archives."
+      - name: Generate SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd release
+          expected=(
+            "jcw-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.gz"
+            "jcw-${RELEASE_TAG}-aarch64-unknown-linux-gnu.tar.gz"
+            "jcw-${RELEASE_TAG}-x86_64-apple-darwin.tar.gz"
+            "jcw-${RELEASE_TAG}-aarch64-apple-darwin.tar.gz"
+          )
+          for archive in "${expected[@]}"; do
+            if [ ! -f "$archive" ] || [ ! -r "$archive" ]; then
+              echo "error: ${archive} is not a readable regular file" >&2
+              exit 1
+            fi
+          done
+          shopt -s nullglob
+          for archive in jcw-*.tar.gz; do
+            if ! printf '%s\n' "${expected[@]}" | grep -Fxq "$archive"; then
+              echo "error: unexpected archive ${archive}" >&2
+              exit 1
+            fi
+          done
+          # Deterministic manifest: sorted archive basenames only.
+          export LC_ALL=C
+          : > SHA256SUMS
+          for archive in $(printf '%s\n' "${expected[@]}" | LC_ALL=C sort); do
+            sha256sum "$archive" >> SHA256SUMS
+          done
+          echo "Generated SHA256SUMS:"
+          cat SHA256SUMS
+      - name: Verify checksums
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum -c SHA256SUMS
+      - name: Reconcile GitHub Release
+        run: |
+          set -euo pipefail
+          cd release
+          expected=(
+            "jcw-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.gz"
+            "jcw-${RELEASE_TAG}-aarch64-unknown-linux-gnu.tar.gz"
+            "jcw-${RELEASE_TAG}-x86_64-apple-darwin.tar.gz"
+            "jcw-${RELEASE_TAG}-aarch64-apple-darwin.tar.gz"
+            "SHA256SUMS"
+          )
+
+          # 200: the release already exists (reuse it). 404: absent (create
+          # it). Any other status is an API/permission failure and must fail
+          # the run rather than being misread as "not found".
+          http_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")"
+          case "$http_code" in
+            200)
+              echo "Release ${RELEASE_TAG} already exists; reusing it."
+              ;;
+            404)
+              echo "Creating release ${RELEASE_TAG}."
+              # The first release auto-generates notes over the full commit
+              # history (there is no prior tag to diff against); maintainers
+              # may edit the body in the GitHub UI and reruns keep it.
+              gh release create "$RELEASE_TAG" --verify-tag --generate-notes
+              ;;
+            *)
+              echo "error: unexpected HTTP ${http_code} while checking release ${RELEASE_TAG}" >&2
+              exit 1
+              ;;
+          esac
+
+          # The workflow owns the release assets: remove every asset outside
+          # the allowlist (stale archives, manually attached files) so the
+          # release has an exact, auditable asset set. Capture the query first
+          # so a failing `gh` call aborts the step under `set -e` instead of
+          # silently iterating over nothing.
+          allowlist="$(printf '%s\n' "${expected[@]}")"
+          assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          if [ -n "$assets" ]; then
+            while IFS= read -r asset_name; do
+              if ! printf '%s\n' "$allowlist" | grep -Fxq "$asset_name"; then
+                echo "Removing non-allowlisted asset ${asset_name}"
+                gh release delete-asset "$RELEASE_TAG" "$asset_name" --yes
+              fi
+            done <<< "$assets"
+          fi
+
+          # Upload the five generated files, clobbering same-name assets. If
+          # an upload is interrupted, rerunning the same tag recovers.
+          gh release upload "$RELEASE_TAG" "${expected[@]}" --clobber
+
+          # Fail unless the release now contains exactly the allowlist.
+          actual="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
+          expected_sorted="$(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)"
+          if [ "$actual" != "$expected_sorted" ]; then
+            echo "error: release assets do not match the allowlist" >&2
+            echo "--- expected ---" >&2
+            printf '%s\n' "$expected_sorted" >&2
+            echo "--- actual ---" >&2
+            printf '%s\n' "$actual" >&2
+            exit 1
+          fi
+          echo "Release ${RELEASE_TAG} contains exactly:"
+          printf '%s\n' "$actual"
