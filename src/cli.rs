@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::error::CliError;
 
-pub const USAGE: &str = "Usage:\n  jcw prepare --file FILE [--output-dir DIR]\n  jcw apply --resolved-file FILE [--manifest FILE] [--write]\n  jcw --help\n\nWorkflow:\n  1. Prepare a private workspace from a JJ Snapshot conflict.\n  2. Edit <workspace>/resolved.\n  3. Apply without --write for a read-only deterministic diff.\n  4. Add --write only to atomically install a validated resolution.\n\nThe workspace, manifest, and numbered region term artifacts are retained.\nOnly Snapshot style is supported; unsupported or malformed input fails closed.";
+pub const USAGE: &str = "Usage:\n  jcw prepare --file FILE [--output-dir DIR]\n  jcw apply --resolved-file FILE [--manifest FILE] [--write]\n  jcw --help\n\nWorkflow:\n  1. Run `jcw prepare --file FILE` to extract the file's unresolved\n     conflict into a dedicated workspace directory. On success it prints\n     the workspace path, which contains the source bytes, conflict\n     details (manifest.json), and the editable resolved file.\n  2. Edit <workspace>/resolved to choose the final content.\n  3. Run `jcw apply --resolved-file <workspace>/resolved` to validate the\n     resolution and preview the change as a diff. Without --write nothing\n     is modified (dry run); add --write to install the validated change.\n\njcw reads conflicts via the installed `jj` CLI and never modifies the\nsource except with --write.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrepareOptions {
