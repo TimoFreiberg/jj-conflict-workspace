@@ -503,14 +503,20 @@ pub(crate) fn region_trailing_eol(source: &[u8], range: ByteRange) -> &'static [
     }
 }
 
-/// Materialize the unresolved editing canvas by copying every outside byte and
-/// replacing each validated region with its JCW placeholder seed line. The
-/// seed is not a resolution: `apply` refuses any resolved file that still
-/// contains a recorded seed.
-pub fn materialize_unresolved(document: &ParsedDocument) -> Result<Vec<u8>, DomainError> {
+/// Materialize the unresolved editing canvas and report where each region's
+/// seed line starts.
+///
+/// Returns the canvas bytes plus, in region order, the byte offset at which
+/// each region's `JCW-UNRESOLVED-CONFLICT-REGION-NNN` seed line begins. The
+/// offsets let the CLI tell the user which line number each marker occupies
+/// without re-scanning (and potentially mis-matching) the outside content.
+pub(crate) fn materialize_unresolved_with_seed_offsets(
+    document: &ParsedDocument,
+) -> Result<(Vec<u8>, Vec<usize>), DomainError> {
     document.validate()?;
 
     let mut output = Vec::new();
+    let mut seed_offsets = Vec::with_capacity(document.regions.len());
     let mut cursor = 0;
     for (region_index, region) in document.regions.iter().enumerate() {
         let range = region.source_range;
@@ -522,6 +528,7 @@ pub fn materialize_unresolved(document: &ParsedDocument) -> Result<Vec<u8>, Doma
             )
         })?;
         output.extend_from_slice(outside);
+        seed_offsets.push(output.len());
         let trailing_eol = region_trailing_eol(&document.source, range);
         output.extend_from_slice(&region_seed(region_index, &region.terms, trailing_eol));
         cursor = range.end;
@@ -534,7 +541,15 @@ pub fn materialize_unresolved(document: &ParsedDocument) -> Result<Vec<u8>, Doma
         )
     })?;
     output.extend_from_slice(suffix);
-    Ok(output)
+    Ok((output, seed_offsets))
+}
+
+/// Materialize the unresolved editing canvas by copying every outside byte and
+/// replacing each validated region with its JCW placeholder seed line. The
+/// seed is not a resolution: `apply` refuses any resolved file that still
+/// contains a recorded seed.
+pub fn materialize_unresolved(document: &ParsedDocument) -> Result<Vec<u8>, DomainError> {
+    materialize_unresolved_with_seed_offsets(document).map(|(bytes, _)| bytes)
 }
 
 /// Validate a resolved file and produce an original-coordinate apply plan.

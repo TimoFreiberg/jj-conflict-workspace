@@ -1,14 +1,15 @@
 use std::process::ExitCode;
 
 use jj_conflict_workspace::{
-    ApplyReport, CliError, Command, USAGE, encode_path_for_output, parse_args,
+    ApplyReport, CliError, Command, PrepareReport, USAGE, encode_path_for_output, parse_args,
 };
 
 fn main() -> ExitCode {
     match parse_args(std::env::args_os().skip(1)) {
         Ok(Command::Prepare(options)) => match jj_conflict_workspace::prepare(&options) {
-            Ok(workspace) => {
-                println!("{}", encode_path_for_output(&workspace));
+            Ok(report) => {
+                println!("{}", encode_path_for_output(&report.workspace));
+                print_prepare_guide(&report);
                 ExitCode::SUCCESS
             }
             Err(error) => {
@@ -34,6 +35,17 @@ fn main() -> ExitCode {
             eprintln!("error: {error}\n\n{USAGE}");
             ExitCode::from(2)
         }
+    }
+}
+
+fn print_prepare_guide(report: &PrepareReport) {
+    let resolved = encode_path_for_output(&report.workspace.join("resolved"));
+    println!(
+        "replace all `JCW-UNRESOLVED-CONFLICT-REGION` markers in {resolved} with the resolved conflicts, then run `jcw apply --resolved-file {resolved}`"
+    );
+    println!("the markers are at:");
+    for marker in &report.markers {
+        println!("line {}:{}", marker.line_number, marker.line);
     }
 }
 

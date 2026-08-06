@@ -262,12 +262,19 @@ mod native_fake_jj_tests {
         result
     }
 
+    /// The first line of successful prepare output is the encoded workspace
+    /// path; the following lines are the human checklist of marker lines to
+    /// replace. `decode_path` parses the path line and asserts the checklist.
     fn decode_path(output: &[u8]) -> PathBuf {
         assert!(output.ends_with(b"\n"), "prepare output must end in one LF");
-        assert!(output.len() > 1, "prepare output must contain a path");
-        assert!(!output[..output.len() - 1].contains(&b'\n'));
-        assert!(!output[..output.len() - 1].contains(&b'\r'));
-        let encoded = &output[..output.len() - 1];
+        let line_end = output
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .expect("prepare output must contain a path line");
+        assert!(line_end > 0, "prepare output must contain a path");
+        assert!(!output[..line_end].contains(&b'\r'));
+        assert_prepare_guidance(&output[line_end + 1..]);
+        let encoded = &output[..line_end];
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStringExt;
@@ -279,6 +286,29 @@ mod native_fake_jj_tests {
             let decoded = decode_percent(text.as_bytes());
             return PathBuf::from(String::from_utf8(decoded).unwrap());
         }
+    }
+
+    /// Assert the human checklist that follows the workspace path line.
+    fn assert_prepare_guidance(rest: &[u8]) {
+        let text = String::from_utf8_lossy(rest);
+        assert!(
+            text.starts_with("replace all `JCW-UNRESOLVED-CONFLICT-REGION` markers in "),
+            "prepare must print how to proceed, got: {text:?}"
+        );
+        assert!(
+            text.contains("with the resolved conflicts, then run `jcw apply --resolved-file "),
+            "prepare must name the apply command, got: {text:?}"
+        );
+        assert!(
+            text.contains("\nthe markers are at:\n"),
+            "prepare must introduce the marker list, got: {text:?}"
+        );
+        assert!(
+            text.contains(
+                "line 2:JCW-UNRESOLVED-CONFLICT-REGION-000: replace this line with the final content for this conflict, or delete the line to drop the content. Terms: regions/region-000/term-000.term"
+            ),
+            "prepare must list each marker with its line number, got: {text:?}"
+        );
     }
 
     fn decode_argument_log(bytes: &[u8]) -> Vec<Vec<u8>> {
@@ -526,6 +556,12 @@ mod native_fake_jj_tests {
         assert!(output.stderr.is_empty());
         let workspace = decode_path(&output.stdout);
         assert!(workspace.starts_with(fs::canonicalize(&output_dir).unwrap()));
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains(
+                "line 4:JCW-UNRESOLVED-CONFLICT-REGION-001: replace this line with the final content for this conflict, or delete the line to drop the content. Terms: regions/region-001/term-000.term"
+            ),
+            "prepare must list the second marker at its line number"
+        );
         assert_eq!(fs::read(&source).unwrap(), complex_snapshot());
         assert_eq!(snapshot_tree(&repository), before);
         assert_eq!(
@@ -878,13 +914,12 @@ mod native_fake_jj_tests {
         assert!(prepared.stderr.is_empty());
         let workspace = decode_path(&prepared.stdout);
         assert!(workspace.is_absolute());
-        assert_eq!(
-            prepared.stdout,
-            format!(
-                "{}\n",
-                jj_conflict_workspace::encode_path_for_output(&workspace)
-            )
-            .into_bytes()
+        let encoded = jj_conflict_workspace::encode_path_for_output(&workspace);
+        assert!(
+            prepared
+                .stdout
+                .starts_with(format!("{encoded}\n").as_bytes()),
+            "prepare stdout must begin with the encoded workspace path line"
         );
         assert!(workspace.starts_with(fs::canonicalize(&output_dir).unwrap()));
         assert_eq!(fs::read(&source).unwrap(), before_source);

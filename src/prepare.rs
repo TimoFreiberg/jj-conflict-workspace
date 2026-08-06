@@ -8,7 +8,9 @@ use std::thread;
 use std::time::UNIX_EPOCH;
 
 use crate::cli::PrepareOptions;
-use crate::core::{materialize_unresolved, parse_snapshot, region_seed, region_trailing_eol};
+use crate::core::{
+    materialize_unresolved_with_seed_offsets, parse_snapshot, region_seed, region_trailing_eol,
+};
 use crate::domain::{
     MANIFEST_SCHEMA_VERSION, Manifest, ManifestRegion, ManifestTerm, Sha256Digest, SourceIdentity,
 };
@@ -103,11 +105,32 @@ struct SourceContext {
     identity: FileIdentity,
 }
 
+/// One unresolved placeholder in a prepared resolved file: its exact line and
+/// where that line sits, so the CLI can tell the user what to replace.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MarkerGuide {
+    /// Zero-based index of the conflict region this marker belongs to.
+    pub region_index: usize,
+    /// One-based line number of the marker line in the resolved file.
+    pub line_number: usize,
+    /// The exact marker line content, without its line terminator.
+    pub line: String,
+}
+
+/// What `jcw prepare` produced, plus the guidance needed to finish the job.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrepareReport {
+    /// The prepared workspace directory.
+    pub workspace: PathBuf,
+    /// Every marker line in `<workspace>/resolved`, in file order.
+    pub markers: Vec<MarkerGuide>,
+}
+
 /// Prepare a source file into a private, persistent workspace.
 ///
 /// The child process invocation is intentionally kept here, at the imperative
 /// boundary. The parser and unresolved-seed materializer remain pure functions.
-pub fn run(options: &PrepareOptions) -> Result<PathBuf, DomainError> {
+pub fn run(options: &PrepareOptions) -> Result<PrepareReport, DomainError> {
     let mut writer = RealWorkspaceWriter;
     run_with_writer_impl(options, &mut writer, invoke_jj)
 }
@@ -116,7 +139,7 @@ fn run_with_writer_impl<W, F>(
     options: &PrepareOptions,
     writer: &mut W,
     invoke_snapshot: F,
-) -> Result<PathBuf, DomainError>
+) -> Result<PrepareReport, DomainError>
 where
     W: WorkspaceWriter,
     F: FnOnce(&SourceContext) -> Result<Vec<u8>, DomainError>,
@@ -139,12 +162,14 @@ where
         },
         other => describe_parse_failure(&source.repository_relative, &snapshot, other),
     })?;
-    let resolved = materialize_unresolved(&document).map_err(|error| {
-        DomainError::invalid(format!(
-            "JJ snapshot output could not be materialized: {}",
-            render_without_prefix(&error)
-        ))
-    })?;
+    let (resolved, seed_offsets) = materialize_unresolved_with_seed_offsets(&document).map_err(
+        |error| {
+            DomainError::invalid(format!(
+                "JJ snapshot output could not be materialized: {}",
+                render_without_prefix(&error)
+            ))
+        },
+    )?;
 
     let manifest = make_manifest(&source, &document)?;
     let workspace = match writer.create_workspace(options.output_dir.as_deref()) {
@@ -167,9 +192,39 @@ where
         &resolved,
         &manifest,
     ) {
-        Ok(()) => Ok(workspace),
+        Ok(()) => {
+            let markers = seed_offsets
+                .iter()
+                .enumerate()
+                .map(|(region_index, &offset)| MarkerGuide {
+                    region_index,
+                    line_number: resolved[..offset]
+                        .iter()
+                        .filter(|&&byte| byte == b'\n')
+                        .count()
+                        + 1,
+                    line: seed_line_content(&resolved, offset),
+                })
+                .collect();
+            Ok(PrepareReport { workspace, markers })
+        }
         Err(error) => Err(cleanup_failed_workspace(writer, workspace, error)),
     }
+}
+
+/// The marker line text at `offset` in the resolved bytes, without its line
+/// terminator (`\n`, `\r\n`, or none).
+fn seed_line_content(resolved: &[u8], offset: usize) -> String {
+    let end = resolved[offset..]
+        .iter()
+        .position(|&byte| byte == b'\n')
+        .map_or(resolved.len(), |relative| offset + relative);
+    let end = if end > offset && resolved[end - 1] == b'\r' {
+        end - 1
+    } else {
+        end
+    };
+    String::from_utf8_lossy(&resolved[offset..end]).into_owned()
 }
 
 /// Test-only prepare boundary. The injected snapshot runner avoids changing PATH
@@ -179,7 +234,7 @@ fn run_with_writer<W, F>(
     options: &PrepareOptions,
     writer: &mut W,
     invoke_snapshot: F,
-) -> Result<PathBuf, DomainError>
+) -> Result<PrepareReport, DomainError>
 where
     W: WorkspaceWriter,
     F: FnOnce(&SourceContext) -> Result<Vec<u8>, DomainError>,
@@ -1457,6 +1512,36 @@ mod tests {
                 .unwrap()
                 .join("jcw-injected")
                 .exists()
+        );
+        drop(temporary);
+    }
+
+    #[test]
+    fn prepare_report_lists_marker_lines_with_line_numbers() {
+        let snapshot = b"prefix\n<<<<<<< opening\n+++++++ side\nleft\n------- base\nright\n>>>>>>> closing\nmiddle\n<<<<<<< opening\n+++++++ side\na\n------- base\nb\n>>>>>>> closing\nsuffix\n";
+        let (temporary, options) = writer_test_fixture("marker-guide");
+        let mut writer = RealWorkspaceWriter;
+        let report = run_with_writer(&options, &mut writer, |_| Ok(snapshot.to_vec())).unwrap();
+        assert!(
+            report
+                .workspace
+                .starts_with(fs::canonicalize(options.output_dir.as_ref().unwrap()).unwrap())
+        );
+        assert!(report.workspace.join("resolved").is_file());
+        assert_eq!(
+            report.markers,
+            vec![
+                MarkerGuide {
+                    region_index: 0,
+                    line_number: 2,
+                    line: "JCW-UNRESOLVED-CONFLICT-REGION-000: replace this line with the final content for this conflict, or delete the line to drop the content. Terms: regions/region-000/term-000.term, regions/region-000/term-001.term".to_owned(),
+                },
+                MarkerGuide {
+                    region_index: 1,
+                    line_number: 4,
+                    line: "JCW-UNRESOLVED-CONFLICT-REGION-001: replace this line with the final content for this conflict, or delete the line to drop the content. Terms: regions/region-001/term-000.term, regions/region-001/term-001.term".to_owned(),
+                },
+            ]
         );
         drop(temporary);
     }

@@ -26,13 +26,19 @@ jcw apply --resolved-file <workspace>/resolved --write
 
 ## Output and exit codes
 
-Paths in output are encoded reversibly so each successful prepare result is exactly one line:
+The first line of a successful prepare result is the encoded absolute workspace path, encoded reversibly:
 
 ```text
 ENCODED_ABSOLUTE_WORKSPACE_PATH\n
 ```
 
-Printable ASCII other than `%` is literal. `%`, controls, non-printable bytes, and invalid Unix path bytes are `%HH` with uppercase hexadecimal; valid UTF-8 non-ASCII text is preserved. This keeps output to one line while retaining a decoder-compatible representation.
+Printable ASCII other than `%` is literal. `%`, controls, non-printable bytes, and invalid Unix path bytes are `%HH` with uppercase hexadecimal; valid UTF-8 non-ASCII text is preserved. This keeps the path line decoder-compatible. The lines after it are a human checklist: the exact `jcw apply` command to run afterwards, and every `JCW-UNRESOLVED-CONFLICT-REGION-NNN` marker line to replace in `<workspace>/resolved` with its 1-based line number:
+
+```text
+replace all `JCW-UNRESOLVED-CONFLICT-REGION` markers in <workspace>/resolved with the resolved conflicts, then run `jcw apply --resolved-file <workspace>/resolved`
+the markers are at:
+line 2:JCW-UNRESOLVED-CONFLICT-REGION-000: replace this line with the final content for this conflict, or delete the line to drop the content. Terms: regions/region-000/term-000.term, regions/region-000/term-001.term
+```
 
 Successful dry-run output is:
 

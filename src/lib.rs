@@ -23,7 +23,7 @@ pub use domain::{
 };
 pub use error::{CliError, DomainError};
 pub use path_output::encode_path_for_output;
-pub use prepare::run as prepare;
+pub use prepare::{MarkerGuide, PrepareReport, run as prepare};
 
 #[cfg(test)]
 mod domain_tests;
