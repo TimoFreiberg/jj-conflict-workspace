@@ -1599,15 +1599,15 @@ fn open_secure_regular_file(path: &Path) -> io::Result<File> {
 }
 
 fn reject_symlink_parents(parent: &Path) -> io::Result<()> {
-    let mut current = if parent.is_absolute() {
-        PathBuf::from(std::path::MAIN_SEPARATOR.to_string())
-    } else {
-        PathBuf::new()
-    };
+    // Rebuild the path from its actual components so Windows drive prefixes
+    // retain their root (for example, `C:\\` rather than drive-relative
+    // `C:`).  Starting with `/` and dropping `RootDir` turns `C:\\...` into
+    // the wrong path before any symlink checks run.
+    let mut current = PathBuf::new();
     for component in parent.components() {
         match component {
             Component::Prefix(prefix) => current.push(prefix.as_os_str()),
-            Component::RootDir => continue,
+            Component::RootDir => current.push(component.as_os_str()),
             Component::CurDir => continue,
             Component::ParentDir => {
                 current.push(component.as_os_str());
@@ -1897,6 +1897,7 @@ fn append_cleanup(error: DomainError, cleanup: CleanupStatus) -> DomainError {
     }
 }
 
+#[cfg(test)]
 fn cleanup_temp(path: &Path) -> CleanupStatus {
     match fs::remove_file(path) {
         Ok(()) => CleanupStatus::Completed,
@@ -1905,6 +1906,7 @@ fn cleanup_temp(path: &Path) -> CleanupStatus {
     }
 }
 
+#[cfg(test)]
 fn cleanup_named_temp(temporary: tempfile::NamedTempFile) -> CleanupStatus {
     cleanup_temp_path(temporary.into_temp_path())
 }
@@ -2492,6 +2494,23 @@ mod tests {
         assert_eq!(decode_hex("00aF", "value").unwrap(), vec![0, 175]);
         assert!(decode_hex("0", "value").is_err());
         assert!(decode_hex("gg", "value").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn symlink_parent_validation_preserves_windows_drive_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let parent = fs::canonicalize(directory.path()).unwrap();
+        assert!(parent.is_absolute());
+        assert!(matches!(
+            parent.components().next(),
+            Some(Component::Prefix(_))
+        ));
+        assert!(matches!(
+            parent.components().nth(1),
+            Some(Component::RootDir)
+        ));
+        reject_symlink_parents(&parent).unwrap();
     }
 
     #[test]

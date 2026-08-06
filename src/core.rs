@@ -653,11 +653,6 @@ fn map_resolved_groups(
         ));
     }
 
-    let mut ranges = vec![(0, 0); groups.len()];
-    let first_range = ranges
-        .first_mut()
-        .ok_or_else(|| DomainError::invalid("cannot map resolved bytes without a range slot"))?;
-    first_range.0 = prefix.len();
     let suffix_start = resolved.len().checked_sub(suffix.len()).ok_or_else(|| {
         guard_violation(
             last.last_region,
@@ -665,6 +660,19 @@ fn map_resolved_groups(
             "the source suffix changed or is missing",
         )
     })?;
+    if prefix.len() > suffix_start {
+        return Err(guard_violation(
+            first.first_region,
+            prefix.len(),
+            "resolved conflict boundaries overlap",
+        ));
+    }
+
+    let mut ranges = vec![(0, 0); groups.len()];
+    let first_range = ranges
+        .first_mut()
+        .ok_or_else(|| DomainError::invalid("cannot map resolved bytes without a range slot"))?;
+    first_range.0 = prefix.len();
     if find_group_boundaries(
         0,
         prefix.len(),
@@ -1331,6 +1339,26 @@ mod apply_tests {
     }
 
     #[test]
+    fn rejects_resolved_prefix_suffix_overlap_without_panicking() {
+        let source = b"prefix\n<<<<<<< conflict\n+++++++ side\nold\n------- base\nbase\n>>>>>>> close\n\nsuffix\n";
+        let manifest = manifest_for(source);
+        let error = validate_apply(ApplyValidationRequest {
+            manifest: &manifest,
+            original_source: source,
+            resolved: b"prefix\nsuffix\n",
+        })
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            DomainError::GuardViolation {
+                region_index: 0,
+                ref message,
+                ..
+            } if message.contains("boundaries overlap")
+        ));
+    }
+
+    #[test]
     fn rejects_configured_continuation_labels_and_all_marker_families() {
         let (source, manifest) = fixture();
         let error = validate_apply(ApplyValidationRequest {
@@ -1542,30 +1570,87 @@ mod tests {
     #[test]
     fn rejects_invalid_structure_with_context() {
         let cases = [
-            (b"<<<<<<<\n+++++++ side\nx\n>>>>>>\n".as_slice(), 0),
+            (
+                b"<<<<<<<\n+++++++ side\nx\n>>>>>>\n".as_slice(),
+                Some(0),
+                Some(b"<<<<<<<\n+++++++ side\nx\n>>>>>>\n".len()),
+            ),
             (
                 b"<<<<<<\n+++++++ side\nx\n+++++++ other\ny\n>>>>>>>\n".as_slice(),
-                0,
+                None,
+                Some(0),
             ),
             (
                 b"<<<<<<<\n------- base\nx\n+++++++ side\ny\n>>>>>>>\n".as_slice(),
-                0,
+                Some(0),
+                Some(8),
             ),
         ];
-        for (input, offset) in cases {
+        for (input, expected_region, expected_offset) in cases {
             let error = parse_snapshot(input).unwrap_err();
-            match error {
-                DomainError::InvalidInput {
-                    byte_offset: Some(actual),
-                    ..
-                } => assert!(actual >= offset),
-                DomainError::UnsupportedStyle { .. } => {}
-                other => panic!("unexpected error: {other:?}"),
-            }
+            assert!(
+                matches!(
+                    error,
+                    DomainError::InvalidInput {
+                        region_index,
+                        byte_offset,
+                        ..
+                    } if region_index == expected_region && byte_offset == expected_offset
+                ),
+                "unexpected malformed-input error: {error:?}"
+            );
         }
         assert!(matches!(
             parse_snapshot(b"ordinary bytes"),
             Err(DomainError::InvalidInput { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_mixed_opening_widths_across_regions_with_context() {
+        let input = b"<<<<<<< first\n+++++++ side\none\n------- base\nbase\n>>>>>>> close\n<<<<<<<< second\n++++++++ side\ntwo\n-------- base\nbase\n>>>>>>>> close\n";
+        let expected_offset = input
+            .windows(b"<<<<<<<< second".len())
+            .position(|window| window == b"<<<<<<<< second")
+            .unwrap();
+        let error = parse_snapshot(input).unwrap_err();
+        assert!(matches!(
+            error,
+            DomainError::InvalidInput {
+                region_index: Some(1),
+                byte_offset: Some(actual),
+                ref message,
+                ..
+            } if actual == expected_offset && message.contains("expected document width 7")
+        ));
+    }
+
+    #[test]
+    fn rejects_over_width_section_and_closing_markers_with_context() {
+        let section = b"<<<<<<<\n++++++++ side\nx\n------- base\ny\n>>>>>>>\n";
+        assert!(matches!(
+            parse_snapshot(section),
+            Err(DomainError::InvalidInput {
+                region_index: Some(0),
+                byte_offset: Some(8),
+                ref message,
+                ..
+            }) if message.contains("section marker run has width 8")
+        ));
+
+        let closing = b"<<<<<<<\n+++++++ side\nx\n------- base\ny\n>>>>>>>> close\n";
+        let expected_offset = closing
+            .windows(b">>>>>>>> close".len())
+            .position(|window| window == b">>>>>>>> close")
+            .unwrap();
+        assert!(matches!(
+            parse_snapshot(closing),
+            Err(DomainError::InvalidInput {
+                region_index: Some(0),
+                byte_offset: Some(actual),
+                ref message,
+                ..
+            }) if actual == expected_offset && message.contains("closing marker run has width 8")
         ));
     }
 
@@ -1704,249 +1789,48 @@ mod tests {
         assert!(materialize_scaffold(&marker_mismatch).is_err());
     }
 
-    #[derive(Debug, Clone, PartialEq)]
-    enum MetadataJson {
-        Object(Vec<(String, MetadataJson)>),
-        Array(Vec<MetadataJson>),
-        String(String),
-        Number(usize),
-        Bool(bool),
-        Null,
-    }
-
-    struct MetadataParser<'a> {
-        bytes: &'a [u8],
-        offset: usize,
-    }
-
-    impl<'a> MetadataParser<'a> {
-        fn new(bytes: &'a [u8]) -> Self {
-            Self { bytes, offset: 0 }
-        }
-
-        fn parse(mut self) -> Result<MetadataJson, String> {
-            let value = self.value()?;
-            self.whitespace();
-            if self.offset != self.bytes.len() {
-                return Err(format!("unexpected metadata byte at {}", self.offset));
-            }
-            Ok(value)
-        }
-
-        fn value(&mut self) -> Result<MetadataJson, String> {
-            self.whitespace();
-            match self.bytes.get(self.offset).copied() {
-                Some(b'{') => self.object(),
-                Some(b'[') => self.array(),
-                Some(b'\"') => self.string().map(MetadataJson::String),
-                Some(b'0'..=b'9') => self.number().map(MetadataJson::Number),
-                Some(b't') => self.literal(b"true", MetadataJson::Bool(true)),
-                Some(b'f') => self.literal(b"false", MetadataJson::Bool(false)),
-                Some(b'n') => self.literal(b"null", MetadataJson::Null),
-                _ => Err(format!("invalid metadata value at {}", self.offset)),
-            }
-        }
-
-        fn object(&mut self) -> Result<MetadataJson, String> {
-            self.expect(b'{')?;
-            let mut values = Vec::new();
-            self.whitespace();
-            if self.take(b'}') {
-                return Ok(MetadataJson::Object(values));
-            }
-            loop {
-                self.whitespace();
-                let key = self.string()?;
-                self.whitespace();
-                self.expect(b':')?;
-                let value = self.value()?;
-                values.push((key, value));
-                self.whitespace();
-                if self.take(b'}') {
-                    return Ok(MetadataJson::Object(values));
-                }
-                self.expect(b',')?;
-            }
-        }
-
-        fn array(&mut self) -> Result<MetadataJson, String> {
-            self.expect(b'[')?;
-            let mut values = Vec::new();
-            self.whitespace();
-            if self.take(b']') {
-                return Ok(MetadataJson::Array(values));
-            }
-            loop {
-                values.push(self.value()?);
-                self.whitespace();
-                if self.take(b']') {
-                    return Ok(MetadataJson::Array(values));
-                }
-                self.expect(b',')?;
-            }
-        }
-
-        fn string(&mut self) -> Result<String, String> {
-            self.expect(b'\"')?;
-            let mut bytes = Vec::new();
-            while let Some(byte) = self.bytes.get(self.offset).copied() {
-                self.offset += 1;
-                match byte {
-                    b'\"' => {
-                        return String::from_utf8(bytes)
-                            .map_err(|_| "metadata string is not UTF-8".to_owned());
-                    }
-                    b'\\' => {
-                        let escaped = self
-                            .bytes
-                            .get(self.offset)
-                            .copied()
-                            .ok_or_else(|| "truncated metadata escape".to_owned())?;
-                        self.offset += 1;
-                        match escaped {
-                            b'\"' | b'\\' | b'/' => bytes.push(escaped),
-                            b'b' => bytes.push(8),
-                            b'f' => bytes.push(12),
-                            b'n' => bytes.push(b'\n'),
-                            b'r' => bytes.push(b'\r'),
-                            b't' => bytes.push(b'\t'),
-                            b'u' => {
-                                let code = self.hex_quad()?;
-                                let character = char::from_u32(code as u32)
-                                    .ok_or_else(|| "invalid metadata unicode escape".to_owned())?;
-                                let mut encoded = [0; 4];
-                                bytes.extend_from_slice(
-                                    character.encode_utf8(&mut encoded).as_bytes(),
-                                );
-                            }
-                            _ => return Err(format!("invalid metadata escape at {}", self.offset)),
-                        }
-                    }
-                    0..=31 => return Err("unescaped metadata control byte".to_owned()),
-                    _ => bytes.push(byte),
-                }
-            }
-            Err("unterminated metadata string".to_owned())
-        }
-
-        fn hex_quad(&mut self) -> Result<u16, String> {
-            let end = self.offset.saturating_add(4);
-            let bytes = self
-                .bytes
-                .get(self.offset..end)
-                .ok_or_else(|| "truncated metadata unicode escape".to_owned())?;
-            self.offset = end;
-            let mut value = 0u16;
-            for byte in bytes {
-                let digit = match byte {
-                    b'0'..=b'9' => (byte - b'0') as u16,
-                    b'a'..=b'f' => (byte - b'a' + 10) as u16,
-                    b'A'..=b'F' => (byte - b'A' + 10) as u16,
-                    _ => return Err("invalid metadata unicode escape".to_owned()),
-                };
-                value = value
-                    .checked_mul(16)
-                    .and_then(|value| value.checked_add(digit))
-                    .ok_or_else(|| "invalid metadata unicode escape".to_owned())?;
-            }
-            Ok(value)
-        }
-
-        fn number(&mut self) -> Result<usize, String> {
-            let start = self.offset;
-            while matches!(self.bytes.get(self.offset), Some(b'0'..=b'9')) {
-                self.offset += 1;
-            }
-            std::str::from_utf8(&self.bytes[start..self.offset])
-                .map_err(|_| "invalid metadata number".to_owned())?
-                .parse()
-                .map_err(|_| "metadata number is out of range".to_owned())
-        }
-
-        fn literal(&mut self, literal: &[u8], value: MetadataJson) -> Result<MetadataJson, String> {
-            let end = self.offset.saturating_add(literal.len());
-            if self.bytes.get(self.offset..end) == Some(literal) {
-                self.offset = end;
-                Ok(value)
-            } else {
-                Err(format!("invalid metadata literal at {}", self.offset))
-            }
-        }
-
-        fn expect(&mut self, expected: u8) -> Result<(), String> {
-            if self.take(expected) {
-                Ok(())
-            } else {
-                Err(format!(
-                    "expected metadata byte {expected:?} at {}",
-                    self.offset
-                ))
-            }
-        }
-
-        fn take(&mut self, expected: u8) -> bool {
-            if self.bytes.get(self.offset) == Some(&expected) {
-                self.offset += 1;
-                true
-            } else {
-                false
-            }
-        }
-
-        fn whitespace(&mut self) {
-            while self
-                .bytes
-                .get(self.offset)
-                .is_some_and(|byte| byte.is_ascii_whitespace())
-            {
-                self.offset += 1;
-            }
-        }
-    }
+    type MetadataJson = serde_json::Value;
 
     fn metadata_field<'a>(value: &'a MetadataJson, key: &str) -> &'a MetadataJson {
-        match value {
-            MetadataJson::Object(fields) => fields
-                .iter()
-                .find_map(|(field, value)| (field == key).then_some(value))
-                .unwrap_or_else(|| panic!("metadata field {key:?} is missing")),
-            _ => panic!("metadata value is not an object while looking for {key:?}"),
-        }
+        value
+            .get(key)
+            .unwrap_or_else(|| panic!("metadata field {key:?} is missing"))
     }
 
     fn metadata_string(value: &MetadataJson, key: &str) -> String {
-        match metadata_field(value, key) {
-            MetadataJson::String(value) => value.clone(),
-            other => panic!("metadata field {key:?} is not a string: {other:?}"),
-        }
+        value
+            .get(key)
+            .and_then(MetadataJson::as_str)
+            .unwrap_or_else(|| panic!("metadata field {key:?} is not a string: {value:?}"))
+            .to_owned()
     }
 
     fn metadata_number(value: &MetadataJson, key: &str) -> usize {
-        match metadata_field(value, key) {
-            MetadataJson::Number(value) => *value,
-            other => panic!("metadata field {key:?} is not a number: {other:?}"),
-        }
+        value
+            .get(key)
+            .and_then(MetadataJson::as_u64)
+            .and_then(|number| usize::try_from(number).ok())
+            .unwrap_or_else(|| panic!("metadata field {key:?} is not a usize: {value:?}"))
     }
 
     fn metadata_bool(value: &MetadataJson, key: &str) -> bool {
-        match metadata_field(value, key) {
-            MetadataJson::Bool(value) => *value,
-            other => panic!("metadata field {key:?} is not a boolean: {other:?}"),
-        }
+        value
+            .get(key)
+            .and_then(MetadataJson::as_bool)
+            .unwrap_or_else(|| panic!("metadata field {key:?} is not a boolean: {value:?}"))
     }
 
     fn metadata_array<'a>(value: &'a MetadataJson, key: &str) -> &'a [MetadataJson] {
-        match metadata_field(value, key) {
-            MetadataJson::Array(values) => values,
-            other => panic!("metadata field {key:?} is not an array: {other:?}"),
-        }
+        value
+            .get(key)
+            .and_then(MetadataJson::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_else(|| panic!("metadata field {key:?} is not an array: {value:?}"))
     }
 
     fn metadata_file(path: &Path) -> MetadataJson {
         let bytes = fs::read(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        MetadataParser::new(&bytes)
-            .parse()
-            .unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+        serde_json::from_slice(&bytes).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
     }
 
     fn metadata_path(path: &str) -> PathBuf {
@@ -2114,33 +1998,35 @@ mod tests {
     #[test]
     fn metadata_driven_supported_corpus_is_exhaustive() {
         let cases = corpus_cases();
-        let supported = cases
-            .iter()
-            .filter(|case| metadata_string(case, "status") == "supported")
-            .collect::<Vec<_>>();
+        let mut supported_count = 0;
+        for case in &cases {
+            match metadata_string(case, "status").as_str() {
+                "supported" => {
+                    supported_count += 1;
+                    assert_supported_metadata_case(case);
+                }
+                "reference" => {}
+                other => panic!(
+                    "{}: unknown corpus status {other:?}",
+                    metadata_string(case, "case_name")
+                ),
+            }
+        }
         assert_eq!(
-            supported.len(),
-            8,
+            supported_count, 8,
             "index must enumerate all supported corpus cases"
         );
-        for case in supported {
-            assert_supported_metadata_case(case);
-        }
     }
 
     #[test]
     fn metadata_driven_reference_corpus_is_rejected() {
         let cases = corpus_cases();
-        let references = cases
-            .iter()
-            .filter(|case| metadata_string(case, "status") == "reference")
-            .collect::<Vec<_>>();
-        assert_eq!(
-            references.len(),
-            8,
-            "index must enumerate all reference corpus cases"
-        );
-        for index_case in references {
+        let mut reference_count = 0;
+        for index_case in &cases {
+            if metadata_string(index_case, "status") != "reference" {
+                continue;
+            }
+            reference_count += 1;
             let name = metadata_string(index_case, "case_name");
             let metadata = case_metadata(index_case);
             let disposition = metadata_string(&metadata, "expected_disposition");
@@ -2197,6 +2083,10 @@ mod tests {
                 _ => unreachable!("the category assertion above admits only parser errors"),
             }
         }
+        assert_eq!(
+            reference_count, 8,
+            "index must enumerate all reference corpus cases"
+        );
     }
 
     #[allow(dead_code)]
@@ -2566,7 +2456,6 @@ mod tests {
         }
     }
 
-    #[test]
     #[allow(dead_code)]
     fn supported_corpus_parse_and_scaffold_legacy_expectations() {
         let cases = [
