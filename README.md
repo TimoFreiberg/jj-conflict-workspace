@@ -50,6 +50,8 @@ Applied N change(s) to `ENCODED_SOURCE_PATH` (OLD bytes -> NEW bytes).
 
 `--help` writes only `USAGE` to stdout and exits 0. Syntax errors write no stdout, an actionable diagnostic followed by `USAGE` to stderr, and exit 2. Operational, JJ, validation, stale-source, and write errors write no stdout, an actionable diagnostic to stderr, and exit 1. A post-commit durability or cleanup ambiguity is reported as an error and never as a successful application.
 
+`prepare` on a file with no unresolved conflict reports `no conflict found in <path> at the current revision; nothing to prepare` and exits 1. Parse failures name the offending line of the jj snapshot output (for example `at line 7: \`<<<<<<<< conflict 2\``) rather than a raw byte offset. Content lines that merely start with `<` (common in Svelte, HTML, JSX, and XML) are ordinary text, never conflict markers; only marker runs at least 7 characters wide are treated as snapshot markers.
+
 ## Workspace layout
 
 A successful workspace has private permissions where the platform supports them:

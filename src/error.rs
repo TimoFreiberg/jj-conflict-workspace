@@ -13,6 +13,11 @@ pub enum DomainError {
         byte_offset: Option<usize>,
         range: Option<(usize, usize)>,
     },
+    /// The snapshot output contained no conflict markers, so there is nothing
+    /// to prepare. This is distinct from malformed input: jj produced a valid
+    /// plain file, and the file simply has no conflict at the requested
+    /// revision.
+    NoConflictFound { path: PathBuf },
     /// A snapshot style other than the supported snapshot grammar was used.
     UnsupportedStyle { style: String },
     /// An imperative shell could not obtain or validate a path.
@@ -125,6 +130,11 @@ impl fmt::Display for DomainError {
                 }
                 Ok(())
             }
+            Self::NoConflictFound { path } => write!(
+                f,
+                "no conflict found in `{}` at the current revision; nothing to prepare",
+                encode_path_for_output(path)
+            ),
             Self::UnsupportedStyle { style } => write!(
                 f,
                 "unsupported snapshot style `{style}`; only Snapshot is supported"

@@ -196,7 +196,7 @@ mod public_api_tests {
     fn pure_boundaries_expose_implemented_core_and_deferred_apply() {
         assert!(matches!(
             parse_snapshot(b"anything"),
-            Err(DomainError::InvalidInput { .. })
+            Err(DomainError::NoConflictFound { .. })
         ));
 
         let source =

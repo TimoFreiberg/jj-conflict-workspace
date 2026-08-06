@@ -1167,9 +1167,9 @@ No files were modified (dry-run).\n",
     fn prepare_rejects_malformed_and_unsupported_snapshots() {
         for (name, snapshot_bytes, expected) in [
             (
-                "malformed",
+                "no-conflict",
                 b"not a snapshot".as_slice(),
-                "could not be parsed",
+                "no conflict found",
             ),
             (
                 "unsupported",

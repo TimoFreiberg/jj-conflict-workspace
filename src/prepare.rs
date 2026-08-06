@@ -133,15 +133,16 @@ where
             observed: current_identity.to_string(),
         });
     }
-    let document = parse_snapshot(&snapshot).map_err(|error| {
-        DomainError::invalid(format!(
-            "JJ snapshot output for `{}` could not be parsed: {error}",
-            encode_path_for_output(&source.repository_relative)
-        ))
+    let document = parse_snapshot(&snapshot).map_err(|error| match error {
+        DomainError::NoConflictFound { .. } => DomainError::NoConflictFound {
+            path: source.repository_relative.clone(),
+        },
+        other => describe_parse_failure(&source.repository_relative, &snapshot, other),
     })?;
     let resolved = materialize_scaffold(&document).map_err(|error| {
         DomainError::invalid(format!(
-            "JJ snapshot output could not be materialized: {error}"
+            "JJ snapshot output could not be materialized: {}",
+            render_without_prefix(&error)
         ))
     })?;
 
@@ -246,6 +247,109 @@ fn read_source_securely(path: &Path) -> io::Result<(Vec<u8>, FileIdentity)> {
         ));
     }
     Ok((bytes, identity))
+}
+
+/// Render a snapshot parse failure so the user can act on it.
+///
+/// The markerless case is reported by the caller as [`DomainError::NoConflictFound`]
+/// with the requested path. Structural errors keep their parser message but
+/// replace the raw byte offset with a line number and the offending line's
+/// content.
+fn describe_parse_failure(relative: &Path, snapshot: &[u8], error: DomainError) -> DomainError {
+    let message = match error {
+        DomainError::InvalidInput {
+            message,
+            region_index,
+            byte_offset,
+            range,
+        } => {
+            let mut rendered = format!(
+                "JJ snapshot output for `{}` could not be parsed: {message}",
+                encode_path_for_output(relative)
+            );
+            if let Some(index) = region_index {
+                rendered.push_str(&format!(" (region {index})"));
+            }
+            match byte_offset.and_then(|offset| line_context(snapshot, offset)) {
+                Some((line_number, content)) => {
+                    rendered.push_str(&format!(" at line {line_number}: `{content}`"));
+                }
+                None if byte_offset.is_some() => {
+                    rendered.push_str(" at end of file");
+                }
+                None => {}
+            }
+            if let Some((start, end)) = range {
+                rendered.push_str(&format!(" at byte range [{start}, {end})"));
+            }
+            rendered
+        }
+        other => format!(
+            "JJ snapshot output for `{}` could not be parsed: {other}",
+            encode_path_for_output(relative)
+        ),
+    };
+    DomainError::invalid(message)
+}
+
+/// Return the 1-based line number and printable content of the line that
+/// contains `offset` in `snapshot`. Offsets at or past the last line end map
+/// to the final line; the caller decides how to phrase that case.
+fn line_context(snapshot: &[u8], offset: usize) -> Option<(usize, String)> {
+    if offset > snapshot.len() {
+        return None;
+    }
+    let mut line_number = 1usize;
+    let mut line_start = 0usize;
+    while line_start < snapshot.len() {
+        let relative_end = snapshot[line_start..]
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .unwrap_or(snapshot.len() - line_start);
+        let line_end = line_start + relative_end;
+        let content_end = if line_end > line_start && snapshot[line_end - 1] == b'\r' {
+            line_end - 1
+        } else {
+            line_end
+        };
+        if offset <= line_end {
+            let mut content =
+                String::from_utf8_lossy(&snapshot[line_start..content_end]).into_owned();
+            if content.chars().count() > 80 {
+                content = content.chars().take(80).collect();
+            }
+            return Some((line_number, content));
+        }
+        line_number += 1;
+        line_start = line_end + 1;
+    }
+    None
+}
+
+/// Render a domain error without the `invalid input:` prefix so it can be
+/// embedded in a higher-level message without doubling prefixes.
+fn render_without_prefix(error: &DomainError) -> String {
+    match error {
+        DomainError::InvalidInput {
+            message,
+            region_index,
+            byte_offset,
+            range,
+        } => {
+            let mut rendered = message.clone();
+            if let Some(index) = region_index {
+                rendered.push_str(&format!(" (region {index})"));
+            }
+            if let Some(offset) = byte_offset {
+                rendered.push_str(&format!(" at byte offset {offset}"));
+            }
+            if let Some((start, end)) = range {
+                rendered.push_str(&format!(" at byte range [{start}, {end})"));
+            }
+            rendered
+        }
+        other => other.to_string(),
+    }
 }
 
 fn validate_relative_path(path: &Path, original: &Path) -> Result<(), DomainError> {
@@ -1352,5 +1456,83 @@ mod tests {
         let prefix = &rendered[..rendered.len() - "...[truncated]".len()];
         assert_eq!(prefix.len() % 3, 0);
         assert!(!prefix.ends_with('%'));
+    }
+
+    #[test]
+    fn line_context_reports_line_number_and_content_for_offsets() {
+        let snapshot = b"<script lang=\"ts\">\nconst x = 1;\nline with \r\nend";
+        // First line start.
+        assert_eq!(
+            line_context(snapshot, 0),
+            Some((1, "<script lang=\"ts\">".into()))
+        );
+        // Inside the first line.
+        assert_eq!(
+            line_context(snapshot, 3),
+            Some((1, "<script lang=\"ts\">".into()))
+        );
+        // Second line.
+        assert_eq!(line_context(snapshot, 20), Some((2, "const x = 1;".into())));
+        // CRLF line excludes the carriage return from the content.
+        assert_eq!(line_context(snapshot, 38), Some((3, "line with ".into())));
+        // Offset at EOF maps to the final unterminated line.
+        assert_eq!(
+            line_context(snapshot, snapshot.len()),
+            Some((4, "end".into()))
+        );
+        // Offsets past EOF are not a line.
+        assert_eq!(line_context(snapshot, snapshot.len() + 1), None);
+        // Long lines are truncated without splitting a character.
+        let long = vec![b'<'; 200];
+        let (line, content) = line_context(&long, 0).unwrap();
+        assert_eq!(line, 1);
+        assert_eq!(content.chars().count(), 80);
+    }
+
+    #[test]
+    fn describe_parse_failure_distinguishes_no_conflict_from_malformed() {
+        let relative = Path::new("client/src/components/Transcript.svelte");
+        let snapshot = b"<script lang=\"ts\">\nconst x = 1;\n";
+
+        let no_conflict = DomainError::NoConflictFound {
+            path: relative.to_path_buf(),
+        };
+        let rendered = no_conflict.to_string();
+        assert!(
+            rendered.contains("no conflict found in `client/src/components/Transcript.svelte`")
+        );
+        assert!(rendered.contains("nothing to prepare"));
+        assert!(!rendered.contains("could not be parsed"));
+        assert!(!rendered.contains("invalid input:"));
+
+        let malformed = describe_parse_failure(
+            relative,
+            snapshot,
+            DomainError::InvalidInput {
+                message: "opening marker run has width 9; expected document width 7".into(),
+                region_index: Some(1),
+                byte_offset: Some(20),
+                range: None,
+            },
+        );
+        let rendered = malformed.to_string();
+        assert!(rendered.contains("could not be parsed"));
+        assert!(rendered.contains("at line 2: `const x = 1;`"));
+        assert!(rendered.contains("(region 1)"));
+        assert!(!rendered.contains("byte offset 20"));
+        assert_eq!(rendered.matches("invalid input:").count(), 1);
+
+        let unsupported = describe_parse_failure(
+            relative,
+            snapshot,
+            DomainError::UnsupportedStyle {
+                style: "Git".into(),
+            },
+        );
+        assert!(
+            unsupported
+                .to_string()
+                .contains("unsupported snapshot style `Git`")
+        );
     }
 }

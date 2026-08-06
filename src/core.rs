@@ -6,6 +6,7 @@ use crate::domain::{
 };
 use crate::error::DomainError;
 use crate::prepare::sha256;
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Line {
@@ -405,6 +406,12 @@ fn parse_region(
 /// The parser recognizes markers only at line-content starts and computes each
 /// term from source ranges. It accepts arbitrary section arity and repeated
 /// bases; it never converts arbitrary source bytes through a lossy text API.
+///
+/// A line whose leading run of `<` is shorter than `MIN_MARKER_WIDTH` is
+/// ordinary content, not a marker: jj's snapshot-style markers are always at
+/// least `MIN_MARKER_WIDTH` characters wide, and real files (Svelte, HTML,
+/// JSX, XML) commonly start lines with `<`. Input with no conflict markers at
+/// all yields [`DomainError::NoConflictFound`].
 pub fn parse_snapshot(input: &[u8]) -> Result<ParsedDocument, DomainError> {
     let lines = scan_lines(input);
     let mut regions = Vec::new();
@@ -414,14 +421,13 @@ pub fn parse_snapshot(input: &[u8]) -> Result<ParsedDocument, DomainError> {
     while let Some(&line) = lines.get(line_index) {
         if let Some(run) = marker_run(input, line, b'<') {
             if run.width < MIN_MARKER_WIDTH {
-                return Err(input_error(
-                    format!(
-                        "opening marker run has width {}; minimum supported width is {MIN_MARKER_WIDTH}",
-                        run.width
-                    ),
-                    None,
-                    Some(line.full.start),
-                ));
+                // A run shorter than the minimum marker width cannot be a
+                // snapshot opening marker; it is ordinary content (e.g. a
+                // Svelte/HTML/JSX line starting with '<').
+                line_index = line_index.checked_add(1).ok_or_else(|| {
+                    input_error("line index overflowed", None, Some(line.full.start))
+                })?;
+                continue;
             }
 
             let width = match document_width {
@@ -452,8 +458,11 @@ pub fn parse_snapshot(input: &[u8]) -> Result<ParsedDocument, DomainError> {
         }
     }
 
-    let width = document_width
-        .ok_or_else(|| input_error("no snapshot conflict opening marker was found", None, None))?;
+    // The pure parser has no path to report; the imperative boundary fills in
+    // the requested file before rendering this error to the user.
+    let width = document_width.ok_or(DomainError::NoConflictFound {
+        path: PathBuf::new(),
+    })?;
     let marker = SnapshotMarker::new(SnapshotStyle::Snapshot, width, width)?;
     ParsedDocument::new(input.to_vec(), regions, marker)
 }
@@ -1576,11 +1585,6 @@ mod tests {
                 Some(b"<<<<<<<\n+++++++ side\nx\n>>>>>>\n".len()),
             ),
             (
-                b"<<<<<<\n+++++++ side\nx\n+++++++ other\ny\n>>>>>>>\n".as_slice(),
-                None,
-                Some(0),
-            ),
-            (
                 b"<<<<<<<\n------- base\nx\n+++++++ side\ny\n>>>>>>>\n".as_slice(),
                 Some(0),
                 Some(8),
@@ -1602,7 +1606,34 @@ mod tests {
         }
         assert!(matches!(
             parse_snapshot(b"ordinary bytes"),
-            Err(DomainError::InvalidInput { .. })
+            Err(DomainError::NoConflictFound { .. })
+        ));
+    }
+
+    #[test]
+    fn treats_sub_minimum_opening_runs_as_ordinary_content() {
+        // Real files (Svelte, HTML, JSX, XML) legitimately start lines with
+        // '<'. A run shorter than MIN_MARKER_WIDTH can never be a jj
+        // snapshot-style marker, so it must be preserved as content around
+        // and between regions instead of failing the parse.
+        let input = b"<script lang=\"ts\">\n<<<<<<< conflict 1 of 1\n+++++++ side\nx\n------- base\nbase\n+++++++ other\ny\n>>>>>>> conflict 1 of 1 ends\n<div>\n";
+        let document = parse_snapshot(input).unwrap();
+        assert_eq!(document.regions.len(), 1);
+        assert_eq!(
+            materialize_scaffold(&document).unwrap(),
+            b"<script lang=\"ts\">\nx\n<div>\n"
+        );
+        assert_eq!(
+            &input[..document.regions[0].source_range.start],
+            b"<script lang=\"ts\">\n"
+        );
+        assert_eq!(&input[document.regions[0].source_range.end..], b"<div>\n");
+
+        // A markerless file that merely starts with '<' is a no-conflict
+        // outcome, not a malformed-input error.
+        assert!(matches!(
+            parse_snapshot(b"<script>\nconst x = 1;\n"),
+            Err(DomainError::NoConflictFound { .. })
         ));
     }
 
