@@ -115,6 +115,8 @@ Releases are published by the `Release jcw binaries` GitHub Actions workflow, wh
 2. Push a tag that is exactly `v` followed by that version, for example `v0.1.0`, pointing at the commit that contains the bump: the workflow reads the package version from the tagged revision.
 3. Wait for the workflow to build, package, and publish the release.
 
+With `just` installed, step 2 is `just release`: it creates the `v<version>` tag at HEAD and pushes it to `origin` (refusing a dirty working copy, a HEAD without the release workflow, or an already-existing tag).
+
 The tag must exactly match the Cargo package version; a mismatched tag fails validation before anything is published. Rerunning the same tag reconciles the existing release (assets are replaced or removed as needed) and never creates a duplicate release. The workflow owns the release assets: on every run it removes any asset outside the allowlist below, so keep ancillary files out of the release itself.
 
 Each release contains exactly these archives plus `SHA256SUMS`:
