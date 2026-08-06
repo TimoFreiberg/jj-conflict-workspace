@@ -1820,12 +1820,64 @@ mod tests {
             .unwrap_or_else(|| panic!("metadata field {key:?} is not a boolean: {value:?}"))
     }
 
+    fn assert_artifact_metadata(artifact: &MetadataJson, bytes: &[u8], context: &str) {
+        assert_eq!(
+            bytes.len(),
+            metadata_number(artifact, "byte_length"),
+            "{context}: byte length"
+        );
+        let digest = sha256(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            digest,
+            metadata_string(artifact, "sha256"),
+            "{context}: SHA-256"
+        );
+        let has_crlf = bytes.windows(2).any(|window| window == b"\r\n");
+        let has_lone_cr = bytes
+            .iter()
+            .enumerate()
+            .any(|(index, &byte)| byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'));
+        let has_lone_lf = bytes.iter().enumerate().any(|(index, &byte)| {
+            byte == b'\n' && bytes.get(index.checked_sub(1).unwrap_or(usize::MAX)) != Some(&b'\r')
+        });
+        let line_ending_mode = match (has_crlf, has_lone_lf, has_lone_cr) {
+            (false, false, false) => "none",
+            (true, false, false) => "crlf",
+            (false, true, false) => "lf",
+            _ => "mixed",
+        };
+        assert_eq!(
+            line_ending_mode,
+            metadata_string(artifact, "line_ending_mode"),
+            "{context}: line-ending mode"
+        );
+        assert_eq!(
+            bytes.last() == Some(&b'\n'),
+            metadata_bool(artifact, "final_newline"),
+            "{context}: final newline"
+        );
+    }
+
     fn metadata_array<'a>(value: &'a MetadataJson, key: &str) -> &'a [MetadataJson] {
         value
             .get(key)
             .and_then(MetadataJson::as_array)
             .map(Vec::as_slice)
             .unwrap_or_else(|| panic!("metadata field {key:?} is not an array: {value:?}"))
+    }
+
+    fn metadata_artifact<'a>(metadata: &'a MetadataJson, path: &str) -> &'a MetadataJson {
+        metadata_field(metadata, "artifacts")
+            .as_object()
+            .and_then(|artifacts| {
+                artifacts.values().find(|artifact| {
+                    artifact.get("path").and_then(MetadataJson::as_str) == Some(path)
+                })
+            })
+            .unwrap_or_else(|| panic!("metadata artifact {path:?} is missing"))
     }
 
     fn metadata_file(path: &Path) -> MetadataJson {
@@ -1882,6 +1934,9 @@ mod tests {
 
         let input_path = metadata_path(&metadata_string(index_case, "input_path"));
         let input = fs::read(&input_path).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let input_artifact =
+            metadata_field(metadata_field(&metadata, "artifacts"), "input.snapshot");
+        assert_artifact_metadata(input_artifact, &input, &format!("{name}: input"));
         let document = parse_snapshot(&input).unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(
             document.source.as_ref(),
@@ -1966,6 +2021,13 @@ mod tests {
                     .unwrap_or_else(|error| {
                         panic!("{name}: region {region_index} term {ordinal}: {error}")
                     });
+                let artifact_metadata =
+                    metadata_artifact(&metadata, &metadata_string(expected_term, "path"));
+                assert_artifact_metadata(
+                    artifact_metadata,
+                    &artifact,
+                    &format!("{name}: region {region_index} term {ordinal}"),
+                );
                 assert_eq!(
                     &*term.logical_bytes,
                     artifact.as_slice(),
@@ -1983,6 +2045,7 @@ mod tests {
         let resolved_path = metadata_string(resolved_artifact, "path");
         let resolved = fs::read(metadata_path(&resolved_path))
             .unwrap_or_else(|error| panic!("{name}: resolved artifact: {error}"));
+        assert_artifact_metadata(resolved_artifact, &resolved, &format!("{name}: resolved"));
         assert_eq!(
             materialize_scaffold(&document).unwrap(),
             resolved,

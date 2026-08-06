@@ -222,7 +222,7 @@ fn read_source_securely(path: &Path) -> io::Result<(Vec<u8>, FileIdentity)> {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(0x0004_0000);
     }
-    #[cfg(all(unix, target_os = "macos"))]
+    #[cfg(all(unix, any(target_os = "macos", target_os = "ios")))]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(0x0000_0100);
