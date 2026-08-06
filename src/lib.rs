@@ -15,7 +15,7 @@ pub(crate) mod repository_root;
 
 pub use apply::ApplyReport;
 pub use cli::{ApplyOptions, Command, PrepareOptions, USAGE, parse_args};
-pub use core::{materialize_scaffold, parse_snapshot, render_unified_diff, validate_apply};
+pub use core::{materialize_unresolved, parse_snapshot, render_unified_diff, validate_apply};
 pub use domain::{
     ApplyPlan, ApplyValidationRequest, ByteRange, ConflictRegion, DiffHunk,
     MANIFEST_SCHEMA_VERSION, MIN_MARKER_WIDTH, Manifest, ManifestRegion, ManifestTerm,
@@ -188,7 +188,7 @@ mod public_api_tests {
         let document = ParsedDocument::new(Vec::<u8>::new(), vec![], marker);
         assert!(document.is_ok());
         assert_eq!(region.range().len(), 1);
-        assert_eq!(MANIFEST_SCHEMA_VERSION, 1);
+        assert_eq!(MANIFEST_SCHEMA_VERSION, 2);
         assert_eq!(MIN_MARKER_WIDTH, 7);
     }
 
@@ -202,9 +202,10 @@ mod public_api_tests {
         let source =
             b"prefix\n<<<<<<< open\n+++++++ side\nx\n------- base\ny\n>>>>>>> close\nsuffix\n";
         let document = parse_snapshot(source).unwrap();
+        let seed = b"JCW-UNRESOLVED-CONFLICT-REGION-000: replace this line with the final content for this conflict, or delete the line to drop the content. Terms: regions/region-000/term-000.term, regions/region-000/term-001.term\n";
         assert_eq!(
-            materialize_scaffold(&document).unwrap(),
-            b"prefix\nx\nsuffix\n"
+            materialize_unresolved(&document).unwrap(),
+            [b"prefix\n".as_slice(), seed, b"suffix\n"].concat()
         );
 
         let source = Vec::<u8>::new();

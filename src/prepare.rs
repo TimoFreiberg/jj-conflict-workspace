@@ -8,7 +8,7 @@ use std::thread;
 use std::time::UNIX_EPOCH;
 
 use crate::cli::PrepareOptions;
-use crate::core::{materialize_scaffold, parse_snapshot};
+use crate::core::{materialize_unresolved, parse_snapshot, region_seed, region_trailing_eol};
 use crate::domain::{
     MANIFEST_SCHEMA_VERSION, Manifest, ManifestRegion, ManifestTerm, Sha256Digest, SourceIdentity,
 };
@@ -106,7 +106,7 @@ struct SourceContext {
 /// Prepare a source file into a private, persistent workspace.
 ///
 /// The child process invocation is intentionally kept here, at the imperative
-/// boundary. The parser and scaffold materializer remain pure functions.
+/// boundary. The parser and unresolved-seed materializer remain pure functions.
 pub fn run(options: &PrepareOptions) -> Result<PathBuf, DomainError> {
     let mut writer = RealWorkspaceWriter;
     run_with_writer_impl(options, &mut writer, invoke_jj)
@@ -139,7 +139,7 @@ where
         },
         other => describe_parse_failure(&source.repository_relative, &snapshot, other),
     })?;
-    let resolved = materialize_scaffold(&document).map_err(|error| {
+    let resolved = materialize_unresolved(&document).map_err(|error| {
         DomainError::invalid(format!(
             "JJ snapshot output could not be materialized: {}",
             render_without_prefix(&error)
@@ -598,6 +598,12 @@ fn make_manifest(
         .map(|(region_index, region)| ManifestRegion {
             region_index,
             source_range: region.source_range,
+            seed: region_seed(
+                region_index,
+                &region.terms,
+                region_trailing_eol(&document.source, region.source_range),
+            )
+            .into_boxed_slice(),
             terms: region
                 .terms
                 .iter()
@@ -933,7 +939,7 @@ fn path_error(path: &Path, error: io::Error) -> DomainError {
     }
 }
 
-fn manifest_json(manifest: &Manifest) -> Vec<u8> {
+pub(crate) fn manifest_json(manifest: &Manifest) -> Vec<u8> {
     let mut json = String::new();
     json.push_str("{\n");
     json.push_str(&format!(
@@ -979,10 +985,14 @@ fn manifest_json(manifest: &Manifest) -> Vec<u8> {
         }
         json.push_str("    {\n");
         json.push_str(&format!(
-            "      \"region_index\": {},\n      \"source_range\": {{\"start\": {}, \"end\": {}}},\n      \"term_count\": {},\n      \"terms\": [\n",
+            "      \"region_index\": {},\n      \"source_range\": {{\"start\": {}, \"end\": {}}},\n      \"seed\": ",
             region.region_index,
             region.source_range.start,
             region.source_range.end,
+        ));
+        push_json_string(&mut json, &String::from_utf8_lossy(&region.seed));
+        json.push_str(&format!(
+            ",\n      \"term_count\": {},\n      \"terms\": [\n",
             region.terms.len()
         ));
         for (term_position, term) in region.terms.iter().enumerate() {
@@ -1127,6 +1137,7 @@ mod tests {
 
     #[test]
     fn manifest_json_contains_safe_layout_and_metadata() {
+        let seed = b"JCW-UNRESOLVED-CONFLICT-REGION-000: replace this line. Terms: regions/region-000/term-000.term\n";
         let manifest = Manifest::new(
             MANIFEST_SCHEMA_VERSION,
             SourceIdentity::new("/repo/file").with_repository_relative("file"),
@@ -1136,6 +1147,7 @@ mod tests {
             vec![ManifestRegion {
                 region_index: 0,
                 source_range: ByteRange::new(1, 2).unwrap(),
+                seed: seed.to_vec().into_boxed_slice(),
                 terms: vec![ManifestTerm {
                     ordinal: 0,
                     kind: TermKind::Side,
@@ -1156,10 +1168,63 @@ mod tests {
             parsed["regions"][0]["terms"][0]["label"],
             Value::from("side \"one\"")
         );
+        assert_eq!(
+            parsed["regions"][0]["seed"],
+            Value::from(String::from_utf8(seed.to_vec()).unwrap())
+        );
         assert!(json.contains("\"region_count\": 1"));
         assert!(json.contains("regions/region-000/term-000.term"));
         assert!(json.contains("side \\\"one\\\""));
         assert!(json.contains("\"logical_length\": 0"));
+    }
+
+    #[test]
+    fn manifest_json_round_trips_region_seeds_through_decode_manifest() {
+        let source =
+            b"prefix\n<<<<<<< open\n+++++++ side\nx\n------- base\ny\n>>>>>>> close\nsuffix\n";
+        let document = crate::core::parse_snapshot(source).unwrap();
+        let regions = document
+            .regions
+            .iter()
+            .enumerate()
+            .map(|(region_index, region)| ManifestRegion {
+                region_index,
+                source_range: region.source_range,
+                seed: region_seed(
+                    region_index,
+                    &region.terms,
+                    region_trailing_eol(&document.source, region.source_range),
+                )
+                .into_boxed_slice(),
+                terms: region
+                    .terms
+                    .iter()
+                    .map(|term| {
+                        ManifestTerm::from_term(
+                            region_index,
+                            term,
+                            Sha256Digest(sha256(&term.logical_bytes)),
+                        )
+                    })
+                    .collect(),
+            })
+            .collect();
+        let manifest = Manifest::new(
+            MANIFEST_SCHEMA_VERSION,
+            SourceIdentity::new("/repo/file").with_repository_relative("file"),
+            Sha256Digest(sha256(source)),
+            document.marker,
+            source.len(),
+            regions,
+        )
+        .unwrap();
+        let decoded =
+            crate::apply::decode_manifest(&manifest_json(&manifest), std::path::Path::new("m"))
+                .unwrap();
+        assert_eq!(decoded.regions.len(), manifest.regions.len());
+        for (expected, actual) in manifest.regions.iter().zip(&decoded.regions) {
+            assert_eq!(expected.seed, actual.seed, "region seed bytes");
+        }
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]

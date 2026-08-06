@@ -78,11 +78,12 @@ fn manifest_validates_schema_ranges_indices_and_exact_paths() {
     let valid_region = ManifestRegion {
         region_index: 0,
         source_range: ByteRange::new(1, 2).unwrap(),
+        seed: b"seed".to_vec().into_boxed_slice(),
         terms: vec![manifest_term(0, 0)],
     };
     assert!(
         Manifest::new(
-            1,
+            MANIFEST_SCHEMA_VERSION,
             source.clone(),
             Sha256Digest::ZERO,
             marker,
@@ -93,7 +94,7 @@ fn manifest_validates_schema_ranges_indices_and_exact_paths() {
     );
     assert!(
         Manifest::new(
-            2,
+            1,
             source.clone(),
             Sha256Digest::ZERO,
             marker,
@@ -107,7 +108,7 @@ fn manifest_validates_schema_ranges_indices_and_exact_paths() {
     invalid.region_index = 1;
     assert!(
         Manifest::new(
-            1,
+            MANIFEST_SCHEMA_VERSION,
             source.clone(),
             Sha256Digest::ZERO,
             marker,
@@ -121,7 +122,7 @@ fn manifest_validates_schema_ranges_indices_and_exact_paths() {
     invalid.source_range = ByteRange::new(2, 4).unwrap();
     assert!(
         Manifest::new(
-            1,
+            MANIFEST_SCHEMA_VERSION,
             source.clone(),
             Sha256Digest::ZERO,
             marker,
@@ -135,7 +136,7 @@ fn manifest_validates_schema_ranges_indices_and_exact_paths() {
     invalid.terms[0].artifact_path = "../escape.term".into();
     assert!(
         Manifest::new(
-            1,
+            MANIFEST_SCHEMA_VERSION,
             source.clone(),
             Sha256Digest::ZERO,
             marker,
@@ -149,7 +150,7 @@ fn manifest_validates_schema_ranges_indices_and_exact_paths() {
     invalid.terms[0].artifact_path = "/absolute/escape.term".into();
     assert!(
         Manifest::new(
-            1,
+            MANIFEST_SCHEMA_VERSION,
             source.clone(),
             Sha256Digest::ZERO,
             marker,
@@ -163,7 +164,7 @@ fn manifest_validates_schema_ranges_indices_and_exact_paths() {
     invalid.terms[0].artifact_path = "regions/region-000/term-001.term".into();
     assert!(
         Manifest::new(
-            1,
+            MANIFEST_SCHEMA_VERSION,
             source.clone(),
             Sha256Digest::ZERO,
             marker,
@@ -177,7 +178,21 @@ fn manifest_validates_schema_ranges_indices_and_exact_paths() {
     invalid.terms.clear();
     assert!(
         Manifest::new(
-            1,
+            MANIFEST_SCHEMA_VERSION,
+            source.clone(),
+            Sha256Digest::ZERO,
+            marker,
+            3,
+            vec![invalid]
+        )
+        .is_err()
+    );
+
+    let mut invalid = valid_region.clone();
+    invalid.seed = Vec::<u8>::new().into_boxed_slice();
+    assert!(
+        Manifest::new(
+            MANIFEST_SCHEMA_VERSION,
             source.clone(),
             Sha256Digest::ZERO,
             marker,
@@ -192,11 +207,12 @@ fn manifest_validates_schema_ranges_indices_and_exact_paths() {
     let second = ManifestRegion {
         region_index: 1,
         source_range: ByteRange::new(1, 2).unwrap(),
+        seed: b"seed".to_vec().into_boxed_slice(),
         terms: vec![manifest_term(1, 0)],
     };
     assert!(
         Manifest::new(
-            1,
+            MANIFEST_SCHEMA_VERSION,
             source.clone(),
             Sha256Digest::ZERO,
             marker,
@@ -211,11 +227,12 @@ fn manifest_validates_schema_ranges_indices_and_exact_paths() {
     let second = ManifestRegion {
         region_index: 1,
         source_range: ByteRange::new(1, 3).unwrap(),
+        seed: b"seed".to_vec().into_boxed_slice(),
         terms: vec![manifest_term(1, 0)],
     };
     assert!(
         Manifest::new(
-            1,
+            MANIFEST_SCHEMA_VERSION,
             source.clone(),
             Sha256Digest::ZERO,
             marker,

@@ -532,9 +532,17 @@ mod native_fake_jj_tests {
             fs::read(workspace.join("source")).unwrap(),
             complex_snapshot()
         );
+        let seed_region_0 = b"JCW-UNRESOLVED-CONFLICT-REGION-000: replace this line with the final content for this conflict, or delete the line to drop the content. Terms: regions/region-000/term-000.term, regions/region-000/term-001.term, regions/region-000/term-002.term, regions/region-000/term-003.term, regions/region-000/term-004.term\r\n";
+        let seed_region_1 = b"JCW-UNRESOLVED-CONFLICT-REGION-001: replace this line with the final content for this conflict, or delete the line to drop the content. Terms: regions/region-001/term-000.term, regions/region-001/term-001.term, regions/region-001/term-002.term, regions/region-001/term-003.term, regions/region-001/term-004.term";
         assert_eq!(
             fs::read(workspace.join("resolved")).unwrap(),
-            b"prefix\r\nleft\r\nbetween\none"
+            [
+                b"prefix\r\n".as_slice(),
+                seed_region_0,
+                b"between\n".as_slice(),
+                seed_region_1,
+            ]
+            .concat()
         );
         let expected_terms: [[&[u8]; 5]; 2] = [
             [
@@ -572,7 +580,7 @@ mod native_fake_jj_tests {
                 "source_sha256",
             ]
         );
-        assert_eq!(manifest["schema_version"], Value::from(1));
+        assert_eq!(manifest["schema_version"], Value::from(2));
         assert_eq!(
             manifest["source_length"],
             Value::from(complex_snapshot().len())
@@ -652,9 +660,27 @@ mod native_fake_jj_tests {
             let region_object = manifest_region.as_object().unwrap();
             assert_eq!(
                 region_object.keys().collect::<Vec<_>>(),
-                ["region_index", "source_range", "term_count", "terms"]
+                [
+                    "region_index",
+                    "seed",
+                    "source_range",
+                    "term_count",
+                    "terms"
+                ]
             );
             assert_eq!(region_object["region_index"], Value::from(region_index));
+            assert_eq!(
+                region_object["seed"],
+                Value::from(
+                    std::str::from_utf8(if region_index == 0 {
+                        seed_region_0
+                    } else {
+                        seed_region_1
+                    })
+                    .unwrap()
+                    .to_owned()
+                )
+            );
             assert_eq!(
                 region_object["term_count"],
                 Value::from(parsed_region.terms.len())
@@ -771,6 +797,45 @@ mod native_fake_jj_tests {
         );
         assert_eq!(snapshot_tree(&repository), before);
         assert_eq!(fs::read(&source).unwrap(), complex_snapshot());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn apply_rejects_untouched_seed_and_accepts_replaced_placeholders() {
+        let (base, source, workspace) = prepare_simple("apply-placeholder-seed");
+        let source_before = fs::read(&source).unwrap();
+
+        // The untouched seed is marker-free and preserves outside bytes, yet
+        // apply must refuse it with an actionable region-naming message.
+        let rejected = run_apply(&workspace, false);
+        assert_eq!(rejected.status.code(), Some(1));
+        assert!(rejected.stdout.is_empty());
+        let stderr = String::from_utf8_lossy(&rejected.stderr);
+        assert!(stderr.starts_with("error: "), "unexpected stderr: {stderr}");
+        assert!(stderr.contains("JCW"), "unexpected stderr: {stderr}");
+        assert!(stderr.contains("region 0"), "unexpected stderr: {stderr}");
+        assert!(
+            stderr.contains("regions/region-000/term-000.term"),
+            "unexpected stderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("regions/region-000/term-001.term"),
+            "unexpected stderr: {stderr}"
+        );
+        assert_eq!(fs::read(&source).unwrap(), source_before);
+
+        // Replacing every placeholder line with content makes the same apply
+        // succeed.
+        fs::write(workspace.join("resolved"), b"prefix\nchanged\nsuffix\n").unwrap();
+        let accepted = run_apply(&workspace, false);
+        assert!(
+            accepted.status.success(),
+            "{}",
+            String::from_utf8_lossy(&accepted.stderr)
+        );
+        assert!(accepted.stderr.is_empty());
+        assert!(String::from_utf8_lossy(&accepted.stdout).contains("+changed"));
+        assert_eq!(fs::read(&source).unwrap(), source_before);
         fs::remove_dir_all(base).unwrap();
     }
 

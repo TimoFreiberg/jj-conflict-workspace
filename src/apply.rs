@@ -241,6 +241,9 @@ struct MarkerJson {
 struct RegionJson {
     region_index: usize,
     source_range: RangeJson,
+    /// Present only in schema v2+; kept optional so a v1 manifest is rejected
+    /// by the schema-version check instead of a serde field error.
+    seed: Option<String>,
     term_count: usize,
     terms: Vec<TermJson>,
 }
@@ -462,7 +465,7 @@ fn render_diff(input: &ValidatedInput, context: &ApplyContext) -> Result<String,
     })
 }
 
-fn decode_manifest(bytes: &[u8], path: &Path) -> Result<Manifest, DomainError> {
+pub(crate) fn decode_manifest(bytes: &[u8], path: &Path) -> Result<Manifest, DomainError> {
     let json: ManifestJson = serde_json::from_slice(bytes)
         .map_err(|error| path_failure(path, format!("could not parse manifest JSON: {error}")))?;
     if json.schema_version != MANIFEST_SCHEMA_VERSION {
@@ -638,6 +641,16 @@ fn decode_manifest(bytes: &[u8], path: &Path) -> Result<Manifest, DomainError> {
                 start: region.source_range.start,
                 end: region.source_range.end,
             },
+            seed: region
+                .seed
+                .ok_or_else(|| {
+                    path_failure(
+                        path,
+                        format!("region {} seed metadata missing", region.region_index),
+                    )
+                })?
+                .into_bytes()
+                .into_boxed_slice(),
             terms,
         });
     }
@@ -2684,5 +2697,97 @@ mod tests {
         assert!(error.contains("phase recheck input"));
         assert!(error.contains("validated input bytes changed"));
         assert!(error.contains("destination is guaranteed unchanged"));
+    }
+
+    #[test]
+    fn schema_v1_manifest_is_rejected_with_the_schema_version_error() {
+        let fixture = br#"{
+            "schema_version": 1,
+            "source": {
+                "canonical_path": "/repo/file",
+                "canonical_path_bytes_hex": "2f7265706f2f66696c65",
+                "repository_relative": "file",
+                "repository_relative_bytes_hex": "66696c65"
+            },
+            "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "source_length": 6,
+            "region_count": 1,
+            "marker": {
+                "style": "Snapshot",
+                "outer_marker_width": 7,
+                "section_marker_width": 7
+            },
+            "regions": [
+                {
+                    "region_index": 0,
+                    "source_range": { "start": 1, "end": 2 },
+                    "term_count": 1,
+                    "terms": [
+                        {
+                            "ordinal": 0,
+                            "kind": "side",
+                            "label": "side",
+                            "logical_length": 2,
+                            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                            "logical_final_newline": false,
+                            "synthetic_separator_eol_removed": false,
+                            "artifact_path": "regions/region-000/term-000.term"
+                        }
+                    ]
+                }
+            ]
+        }"#;
+        let error = decode_manifest(fixture, Path::new("manifest.json")).unwrap_err();
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("unsupported manifest schema version 1; expected 2"),
+            "unexpected v1 rejection: {rendered}"
+        );
+    }
+
+    #[test]
+    fn schema_v2_manifest_missing_region_seed_is_rejected() {
+        let fixture = br#"{
+            "schema_version": 2,
+            "source": {
+                "canonical_path": "/repo/file",
+                "canonical_path_bytes_hex": "2f7265706f2f66696c65",
+                "repository_relative": "file",
+                "repository_relative_bytes_hex": "66696c65"
+            },
+            "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "source_length": 6,
+            "region_count": 1,
+            "marker": {
+                "style": "Snapshot",
+                "outer_marker_width": 7,
+                "section_marker_width": 7
+            },
+            "regions": [
+                {
+                    "region_index": 0,
+                    "source_range": { "start": 1, "end": 2 },
+                    "term_count": 1,
+                    "terms": [
+                        {
+                            "ordinal": 0,
+                            "kind": "side",
+                            "label": "side",
+                            "logical_length": 2,
+                            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                            "logical_final_newline": false,
+                            "synthetic_separator_eol_removed": false,
+                            "artifact_path": "regions/region-000/term-000.term"
+                        }
+                    ]
+                }
+            ]
+        }"#;
+        let error = decode_manifest(fixture, Path::new("manifest.json")).unwrap_err();
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("seed metadata missing"),
+            "unexpected missing-seed rejection: {rendered}"
+        );
     }
 }

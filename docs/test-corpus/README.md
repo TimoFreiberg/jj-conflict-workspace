@@ -19,12 +19,15 @@ literal escapes were normalized as documented in each `case.json`.
 - `cases/<name>/input.snapshot` is a materialized snapshot-style input.
 - `cases/<name>/regions/region-NNN/term-NNN.term` contains one logical term per
   region in materialized order; section marker/header/label lines are excluded.
-- `cases/<name>/resolved` is a structural scaffold made by replacing every
-  conflict region with that region's first logical term (`term-000`) while
-  preserving stable bytes outside the regions. It is not a semantic resolution.
+- `cases/<name>/resolved` is the JCW unresolved editing canvas: bytes outside
+  every conflict region are preserved exactly, and each region is replaced with
+  one self-describing `JCW-UNRESOLVED-CONFLICT-REGION-NNN` placeholder line
+  naming the region index and its term artifact paths, mirroring the closing
+  marker line's EOL. It is not a resolution; `apply` refuses any region that
+  still contains its recorded placeholder seed bytes.
 - `reference/<name>/input.snapshot` and its `case.json` document rejected or
   reference-only formats: default diff, Git/diff3, malformed, wrong-arity, and
-  whitespace-tolerant inputs. They intentionally have no resolved scaffold.
+  whitespace-tolerant inputs. They intentionally have no resolved seed file.
   The parser API has no expected-side-count argument: valid snapshot inputs
   have arbitrary arity, while the checked-in `wrong-arity` bytes are rejected
   because they independently contain unsupported diff structure and do not
@@ -35,7 +38,8 @@ literal escapes were normalized as documented in each `case.json`.
   synthetic separator-EOL facts.
 
 The future test loader can therefore read one input, enumerate each region's
-contiguous terms, and compare a materializer's resolved scaffold byte-for-byte.
+contiguous terms, and compare a materializer's unresolved seed output
+byte-for-byte.
 Supported cases use a deliberately narrower v1 grammar: snapshot section headers
 only (`+++++++` sides and `-------` bases), with the outer marker width inferred
 from the opening marker. Structural `%`, backslash, `|||||||`, and `=======`

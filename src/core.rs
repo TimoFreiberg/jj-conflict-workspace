@@ -2,7 +2,7 @@
 
 use crate::domain::{
     ApplyPlan, ApplyValidationRequest, ByteRange, ConflictRegion, DiffHunk, MIN_MARKER_WIDTH,
-    Manifest, ParsedDocument, SnapshotMarker, SnapshotStyle, Term, TermKind,
+    Manifest, ManifestTerm, ParsedDocument, SnapshotMarker, SnapshotStyle, Term, TermKind,
 };
 use crate::error::DomainError;
 use crate::prepare::sha256;
@@ -467,10 +467,47 @@ pub fn parse_snapshot(input: &[u8]) -> Result<ParsedDocument, DomainError> {
     ParsedDocument::new(input.to_vec(), regions, marker)
 }
 
-/// Materialize a structural scaffold by copying every outside byte and
-/// replacing each validated region with its first logical term. The first term
-/// is only a structural seed, not a semantic merge decision.
-pub fn materialize_scaffold(document: &ParsedDocument) -> Result<Vec<u8>, DomainError> {
+/// Build the exact placeholder seed bytes for a conflict region: one
+/// self-describing ASCII line naming the region index and every term artifact
+/// path, followed by `trailing_eol` (the closing marker line's EOL mirrored
+/// from the source region span: `\r\n`, `\n`, or none).
+///
+/// The seed is deliberately marker-free: it contains no `< > % + | =` byte,
+/// so it can never be mistaken for a native conflict marker at any active
+/// width, and no backslash, so it cannot form a JJ continuation label.
+pub(crate) fn region_seed(region_index: usize, terms: &[Term], trailing_eol: &[u8]) -> Vec<u8> {
+    let mut seed = format!(
+        "JCW-UNRESOLVED-CONFLICT-REGION-{region_index:03}: replace this line with the final content for this conflict, or delete the line to drop the content. Terms: "
+    );
+    for (ordinal, _) in terms.iter().enumerate() {
+        if ordinal > 0 {
+            seed.push_str(", ");
+        }
+        seed.push_str(
+            &ManifestTerm::generated_artifact_path(region_index, ordinal).to_string_lossy(),
+        );
+    }
+    seed.push_str(&String::from_utf8_lossy(trailing_eol));
+    seed.into_bytes()
+}
+
+/// The trailing EOL bytes of a conflict region's source span: the closing
+/// marker line's EOL, which the seed line mirrors.
+pub(crate) fn region_trailing_eol(source: &[u8], range: ByteRange) -> &'static [u8] {
+    if range.end <= source.len() && range.end >= 2 && &source[range.end - 2..range.end] == b"\r\n" {
+        b"\r\n"
+    } else if range.end <= source.len() && range.end >= 1 && source[range.end - 1] == b'\n' {
+        b"\n"
+    } else {
+        b""
+    }
+}
+
+/// Materialize the unresolved editing canvas by copying every outside byte and
+/// replacing each validated region with its JCW placeholder seed line. The
+/// seed is not a resolution: `apply` refuses any resolved file that still
+/// contains a recorded seed.
+pub fn materialize_unresolved(document: &ParsedDocument) -> Result<Vec<u8>, DomainError> {
     document.validate()?;
 
     let mut output = Vec::new();
@@ -485,14 +522,8 @@ pub fn materialize_scaffold(document: &ParsedDocument) -> Result<Vec<u8>, Domain
             )
         })?;
         output.extend_from_slice(outside);
-        let first_term = region.terms.first().ok_or_else(|| {
-            input_error(
-                "conflict region has no usable first term",
-                Some(region_index),
-                Some(range.start),
-            )
-        })?;
-        output.extend_from_slice(&first_term.logical_bytes);
+        let trailing_eol = region_trailing_eol(&document.source, range);
+        output.extend_from_slice(&region_seed(region_index, &region.terms, trailing_eol));
         cursor = range.end;
     }
     let suffix = document.source.get(cursor..).ok_or_else(|| {
@@ -558,6 +589,56 @@ pub fn validate_apply(request: ApplyValidationRequest<'_>) -> Result<ApplyPlan, 
         &groups,
         &resolved_ranges,
     )?;
+
+    // Refuse any resolved file in which a region still contains its recorded
+    // JCW placeholder seed bytes. A fully untouched seed is an exact match;
+    // a merged group of adjacent regions still contains every untouched
+    // region's seed, so partial resolutions are caught as well.
+    for (region_index, region) in manifest.regions.iter().enumerate() {
+        if region.seed.is_empty() {
+            continue;
+        }
+        let (resolved_start, resolved_end) = resolved_ranges
+            .iter()
+            .zip(&groups)
+            .find(|(_, group)| {
+                group.first_region <= region_index && region_index <= group.last_region
+            })
+            .map(|(&range, _)| range)
+            .ok_or_else(|| {
+                DomainError::invalid("conflict group is missing for a manifest region")
+            })?;
+        let haystack = request
+            .resolved
+            .get(resolved_start..resolved_end)
+            .ok_or_else(|| {
+                DomainError::invalid("resolved conflict range is outside the resolved bytes")
+            })?;
+        if let Some(offset) = haystack
+            .windows(region.seed.len())
+            .position(|window| window == &*region.seed)
+        {
+            let start = resolved_start
+                .checked_add(offset)
+                .ok_or_else(|| DomainError::invalid("placeholder offset overflow"))?;
+            let end = start
+                .checked_add(region.seed.len())
+                .ok_or_else(|| DomainError::invalid("placeholder range end overflow"))?;
+            let terms = region
+                .terms
+                .iter()
+                .map(|term| term.artifact_path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(DomainError::InvalidResolved {
+                message: format!(
+                    "region {region_index} still contains the JCW unresolved placeholder; replace it with the final content (terms: {terms})"
+                ),
+                region_index: Some(region_index),
+                range: Some((start, end)),
+            });
+        }
+    }
 
     let mut hunks = Vec::new();
     for (group, &(resolved_start, resolved_end)) in groups.iter().zip(&resolved_ranges) {
@@ -1211,6 +1292,12 @@ mod apply_tests {
             .map(|(region_index, region)| ManifestRegion {
                 region_index,
                 source_range: region.source_range,
+                seed: region_seed(
+                    region_index,
+                    &region.terms,
+                    region_trailing_eol(&document.source, region.source_range),
+                )
+                .into_boxed_slice(),
                 terms: region
                     .terms
                     .iter()
@@ -1458,6 +1545,159 @@ mod apply_tests {
         assert!(rendered.contains("\\x80"));
         assert!(rendered.contains("No newline at end of file"));
     }
+
+    #[test]
+    fn apply_rejects_untouched_seed() {
+        let (source, manifest) = fixture();
+        let unresolved = materialize_unresolved(&parse_snapshot(&source).unwrap()).unwrap();
+        let error = validate_apply(ApplyValidationRequest {
+            manifest: &manifest,
+            original_source: &source,
+            resolved: &unresolved,
+        })
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            DomainError::InvalidResolved {
+                region_index: Some(0),
+                ..
+            }
+        ));
+        let rendered = error.to_string();
+        assert!(rendered.contains("JCW"));
+        assert!(rendered.contains("region 0"));
+        assert!(rendered.contains("regions/region-000/term-000.term"));
+        assert!(rendered.contains("regions/region-000/term-001.term"));
+    }
+
+    #[test]
+    fn apply_rejects_untouched_adjacent_regions_seed() {
+        // Two back-to-back regions (no bytes between their spans) merge into a
+        // single conflict group; every untouched region's seed must still be
+        // refused, and a fully replaced group must be accepted.
+        let source = b"x\n<<<<<<< one\n+++++++ side\na\n------- base\nb\n>>>>>>> end\n<<<<<<< two\n+++++++ side\nc\n------- base\nd\n>>>>>>> end\ny\n";
+        let manifest = manifest_for(source);
+        let document = parse_snapshot(source).unwrap();
+        assert_eq!(conflict_groups(&manifest).len(), 1);
+
+        let unresolved = materialize_unresolved(&document).unwrap();
+        let error = validate_apply(ApplyValidationRequest {
+            manifest: &manifest,
+            original_source: source,
+            resolved: &unresolved,
+        })
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            DomainError::InvalidResolved {
+                region_index: Some(0),
+                ..
+            }
+        ));
+
+        // Region 0 replaced but region 1's seed untouched: the merged group
+        // still contains region 1's recorded seed.
+        let partially = [
+            b"x\n".as_slice(),
+            b"replaced\n".as_slice(),
+            region_seed(1, &document.regions[1].terms, b"\n").as_slice(),
+            b"y\n".as_slice(),
+        ]
+        .concat();
+        let error = validate_apply(ApplyValidationRequest {
+            manifest: &manifest,
+            original_source: source,
+            resolved: &partially,
+        })
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            DomainError::InvalidResolved {
+                region_index: Some(1),
+                ..
+            }
+        ));
+        assert!(error.to_string().contains("region 1"));
+
+        let replaced = b"x\nreplaced\ny\n";
+        let plan = validate_apply(ApplyValidationRequest {
+            manifest: &manifest,
+            original_source: source,
+            resolved: replaced,
+        })
+        .unwrap();
+        assert_eq!(plan.hunks.len(), 1);
+        assert_eq!(&*plan.hunks[0].replacement, b"replaced\n");
+    }
+
+    #[test]
+    fn apply_rejects_partially_resolved() {
+        let source = b"a\n<<<<<<< one\n+++++++ side\nx\n------- base\ny\n>>>>>>> end\nb\n<<<<<<< two\n+++++++ side\np\n------- base\nq\n>>>>>>> end\nz\n";
+        let manifest = manifest_for(source);
+        let document = parse_snapshot(source).unwrap();
+        let resolved = [
+            b"a\n".as_slice(),
+            b"replacement\n".as_slice(),
+            b"b\n".as_slice(),
+            region_seed(1, &document.regions[1].terms, b"\n").as_slice(),
+            b"z\n".as_slice(),
+        ]
+        .concat();
+        let error = validate_apply(ApplyValidationRequest {
+            manifest: &manifest,
+            original_source: source,
+            resolved: &resolved,
+        })
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            DomainError::InvalidResolved {
+                region_index: Some(1),
+                ..
+            }
+        ));
+        let rendered = error.to_string();
+        assert!(rendered.contains("region 1"));
+        assert!(rendered.contains("regions/region-001/term-001.term"));
+    }
+
+    #[test]
+    fn apply_accepts_fully_resolved() {
+        // Content replacement, deletion, and keeping one term verbatim are all
+        // valid resolutions; the hunks match the three regions.
+        let source = b"a\n<<<<<<< one\n+++++++ side\nx\n------- base\ny\n>>>>>>> end\nb\n<<<<<<< two\n+++++++ side\np\n------- base\nq\n>>>>>>> end\nc\n<<<<<<< three\n+++++++ side\nm\n------- base\nn\n>>>>>>> end\nd\n";
+        let manifest = manifest_for(source);
+        let resolved = b"a\nreplacement\nb\nc\nm\nd\n";
+        let plan = validate_apply(ApplyValidationRequest {
+            manifest: &manifest,
+            original_source: source,
+            resolved,
+        })
+        .unwrap();
+        assert_eq!(plan.hunks.len(), 3);
+        assert_eq!(&*plan.hunks[0].replacement, b"replacement\n");
+        assert!(plan.hunks[1].replacement.is_empty());
+        assert_eq!(&*plan.hunks[2].replacement, b"m\n");
+    }
+
+    #[test]
+    fn apply_accepts_seed_not_matching_any_recorded_seed() {
+        let (source, manifest) = fixture();
+        // Content that differs from every recorded seed is accepted, even when
+        // it contains a seed-like prefix that is not the full seed.
+        let resolved = b"prefix\nJCW-UNRESOLVED-CONFLICT-REGION-000: partial text\nsuffix\n";
+        let plan = validate_apply(ApplyValidationRequest {
+            manifest: &manifest,
+            original_source: &source,
+            resolved,
+        })
+        .unwrap();
+        assert_eq!(plan.hunks.len(), 1);
+        assert_eq!(
+            &*plan.hunks[0].replacement,
+            b"JCW-UNRESOLVED-CONFLICT-REGION-000: partial text\n"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1564,12 +1804,13 @@ mod tests {
     }
 
     #[test]
-    fn preserves_regions_and_scaffold_bytes() {
+    fn preserves_regions_and_seed_bytes() {
         let input = b"prefix\n<<<<<<< open\n+++++++ left\nleft\n------- base\nbase\n+++++++ right\nright\n>>>>>>> close\nsuffix\n";
         let document = parse_snapshot(input).unwrap();
+        let seed = b"JCW-UNRESOLVED-CONFLICT-REGION-000: replace this line with the final content for this conflict, or delete the line to drop the content. Terms: regions/region-000/term-000.term, regions/region-000/term-001.term, regions/region-000/term-002.term\n";
         assert_eq!(
-            materialize_scaffold(&document).unwrap(),
-            b"prefix\nleft\nsuffix\n"
+            materialize_unresolved(&document).unwrap(),
+            [b"prefix\n".as_slice(), seed, b"suffix\n"].concat()
         );
         let range = document.regions[0].source_range;
         assert_eq!(&input[..range.start], b"prefix\n");
@@ -1620,8 +1861,18 @@ mod tests {
         let document = parse_snapshot(input).unwrap();
         assert_eq!(document.regions.len(), 1);
         assert_eq!(
-            materialize_scaffold(&document).unwrap(),
-            b"<script lang=\"ts\">\nx\n<div>\n"
+            materialize_unresolved(&document).unwrap(),
+            [
+                b"<script lang=\"ts\">\n".as_slice(),
+                region_seed(
+                    0,
+                    &document.regions[0].terms,
+                    region_trailing_eol(&document.source, document.regions[0].source_range)
+                )
+                .as_slice(),
+                b"<div>\n"
+            ]
+            .concat()
         );
         assert_eq!(
             &input[..document.regions[0].source_range.start],
@@ -1775,7 +2026,7 @@ mod tests {
             regions: vec![region],
             marker,
         };
-        assert!(materialize_scaffold(&document).is_err());
+        assert!(materialize_unresolved(&document).is_err());
 
         let empty_terms = ConflictRegion {
             source_range: ByteRange { start: 0, end: 1 },
@@ -1787,7 +2038,7 @@ mod tests {
             regions: vec![empty_terms],
             marker,
         };
-        assert!(materialize_scaffold(&document).is_err());
+        assert!(materialize_unresolved(&document).is_err());
 
         let overlapping = ParsedDocument {
             source: b"xyz".to_vec().into_boxed_slice(),
@@ -1805,7 +2056,7 @@ mod tests {
             ],
             marker,
         };
-        assert!(materialize_scaffold(&overlapping).is_err());
+        assert!(materialize_unresolved(&overlapping).is_err());
 
         let mismatched_marker = SnapshotMarker::new(SnapshotStyle::Snapshot, 8, 8).unwrap();
         let marker_mismatch = ParsedDocument {
@@ -1817,7 +2068,107 @@ mod tests {
             }],
             marker,
         };
-        assert!(materialize_scaffold(&marker_mismatch).is_err());
+        assert!(materialize_unresolved(&marker_mismatch).is_err());
+    }
+
+    #[test]
+    fn region_seed_is_self_describing_marker_free_and_deterministic() {
+        let terms = vec![
+            Term::new(0, TermKind::Side, "side", b"x".to_vec(), false).unwrap(),
+            Term::new(1, TermKind::Base, "base", b"y".to_vec(), false).unwrap(),
+            Term::new(2, TermKind::Side, "side 2", b"z".to_vec(), false).unwrap(),
+        ];
+        let seed = region_seed(2, &terms, b"\n");
+        let text = String::from_utf8(seed.clone()).unwrap();
+        assert!(text.contains("JCW-UNRESOLVED-CONFLICT-REGION-002"));
+        assert!(text.contains("regions/region-002/term-000.term"));
+        assert!(text.contains("regions/region-002/term-001.term"));
+        assert!(text.contains("regions/region-002/term-002.term"));
+        assert!(text.ends_with('\n'));
+        assert!(text.is_ascii());
+        assert!(
+            !text.contains('\\'),
+            "seed must not form a continuation shape"
+        );
+        for marker in [b'<', b'>', b'%', b'+', b'|', b'='] {
+            assert!(
+                !text.contains(marker as char),
+                "seed must contain no marker-family byte `{}`: {text:?}",
+                marker as char
+            );
+            assert!(
+                seed.windows(MIN_MARKER_WIDTH)
+                    .all(|window| !window.iter().all(|byte| *byte == marker)),
+                "seed must contain no marker-family run of width {MIN_MARKER_WIDTH}"
+            );
+        }
+        assert_eq!(region_seed(2, &terms, b"\n"), seed, "seed is deterministic");
+    }
+
+    #[test]
+    fn region_seed_mirrors_the_region_trailing_eol() {
+        let lf = b"prefix\n<<<<<<< open\n+++++++ side\nx\n------- base\ny\n>>>>>>> close\nsuffix\n";
+        let document = parse_snapshot(lf).unwrap();
+        let region = &document.regions[0];
+        assert_eq!(
+            region_trailing_eol(&document.source, region.source_range),
+            b"\n"
+        );
+        assert!(region_seed(0, &region.terms, b"\n").ends_with(b"\n"));
+
+        let crlf = b"prefix\r\n<<<<<<< open\r\n+++++++ side\r\nx\r\n------- base\r\ny\r\n>>>>>>> close\r\nsuffix\r\n";
+        let document = parse_snapshot(crlf).unwrap();
+        let region = &document.regions[0];
+        assert_eq!(
+            region_trailing_eol(&document.source, region.source_range),
+            b"\r\n"
+        );
+        assert!(region_seed(0, &region.terms, b"\r\n").ends_with(b"\r\n"));
+
+        let no_eol = b"prefix\n<<<<<<< open\n+++++++ side\nx\n------- base\ny\n>>>>>>> close";
+        let document = parse_snapshot(no_eol).unwrap();
+        let region = &document.regions[0];
+        assert_eq!(
+            region_trailing_eol(&document.source, region.source_range),
+            b""
+        );
+        assert!(!region_seed(0, &region.terms, b"").ends_with(b"\n"));
+    }
+
+    #[test]
+    fn materialize_unresolved_mirrors_eol_forms_and_preserves_outside_bytes() {
+        let crlf = b"prefix\r\n<<<<<<< open\r\n+++++++ side\r\nx\r\n------- base\r\ny\r\n>>>>>>> close\r\nsuffix\r\n";
+        let document = parse_snapshot(crlf).unwrap();
+        let seed = region_seed(0, &document.regions[0].terms, b"\r\n");
+        assert_eq!(
+            materialize_unresolved(&document).unwrap(),
+            [b"prefix\r\n".as_slice(), seed.as_slice(), b"suffix\r\n"].concat()
+        );
+
+        let no_eol = b"prefix\n<<<<<<< open\n+++++++ side\nx\n------- base\ny\n>>>>>>> close";
+        let document = parse_snapshot(no_eol).unwrap();
+        let seed = region_seed(0, &document.regions[0].terms, b"");
+        assert_eq!(
+            materialize_unresolved(&document).unwrap(),
+            [b"prefix\n".as_slice(), seed.as_slice()].concat()
+        );
+
+        // Out-of-range document spans must not panic the materializer.
+        let marker = SnapshotMarker::default();
+        let term = Term::new(0, TermKind::Side, "side", b"x".to_vec(), false).unwrap();
+        let malformed = ParsedDocument {
+            source: b"x".to_vec().into_boxed_slice(),
+            regions: vec![ConflictRegion {
+                source_range: ByteRange {
+                    start: usize::MAX,
+                    end: usize::MAX,
+                },
+                marker,
+                terms: vec![term],
+            }],
+            marker,
+        };
+        assert!(materialize_unresolved(&malformed).is_err());
     }
 
     type MetadataJson = serde_json::Value;
@@ -2078,9 +2429,9 @@ mod tests {
             .unwrap_or_else(|error| panic!("{name}: resolved artifact: {error}"));
         assert_artifact_metadata(resolved_artifact, &resolved, &format!("{name}: resolved"));
         assert_eq!(
-            materialize_scaffold(&document).unwrap(),
+            materialize_unresolved(&document).unwrap(),
             resolved,
-            "{name}: resolved scaffold"
+            "{name}: resolved seed"
         );
         assert_eq!(
             root.join("input.snapshot"),
@@ -2382,7 +2733,7 @@ mod tests {
             }
             let resolved = fs::read(root.join("resolved")).unwrap();
             assert_eq!(
-                materialize_scaffold(&document).unwrap(),
+                materialize_unresolved(&document).unwrap(),
                 resolved,
                 "{case}: resolved"
             );
@@ -2627,7 +2978,7 @@ mod tests {
                 }
             }
             assert_eq!(
-                materialize_scaffold(&document).unwrap(),
+                materialize_unresolved(&document).unwrap(),
                 fs::read(root.join("resolved")).unwrap(),
                 "{case}: resolved"
             );
@@ -2768,7 +3119,19 @@ mod tests {
                 input.extend_from_slice(eol);
             }
             region_ranges.push((region_start, input.len()));
-            expected_resolved.extend_from_slice(&region_terms[0].2);
+            let terms_for_seed: Vec<Term> = region_terms
+                .iter()
+                .enumerate()
+                .map(|(ordinal, (kind, label, logical))| {
+                    Term::new(ordinal, *kind, label.clone(), logical.clone(), synthetic).unwrap()
+                })
+                .collect();
+            let trailing_eol: &[u8] = if synthetic { b"" } else { eol };
+            expected_resolved.extend_from_slice(&region_seed(
+                region_index,
+                &terms_for_seed,
+                trailing_eol,
+            ));
             expected_terms.push(region_terms);
 
             if !synthetic {
@@ -2850,9 +3213,9 @@ mod tests {
             }
         }
         assert_eq!(
-            materialize_scaffold(&document).unwrap(),
+            materialize_unresolved(&document).unwrap(),
             generated.expected_resolved,
-            "generated case {case_index}: scaffold"
+            "generated case {case_index}: seed"
         );
         let mut previous_end = 0;
         for (region_index, region) in document.regions.iter().enumerate() {
@@ -2949,6 +3312,12 @@ mod tests {
             .map(|(region_index, region)| ManifestRegion {
                 region_index,
                 source_range: region.source_range,
+                seed: region_seed(
+                    region_index,
+                    &region.terms,
+                    region_trailing_eol(&document.source, region.source_range),
+                )
+                .into_boxed_slice(),
                 terms: region
                     .terms
                     .iter()
@@ -3049,6 +3418,7 @@ mod tests {
                     start: usize::MAX,
                     end: usize::MAX,
                 },
+                seed: b"seed".to_vec().into_boxed_slice(),
                 terms: vec![ManifestTerm::from_term(
                     0,
                     &term,
@@ -3057,7 +3427,7 @@ mod tests {
             }],
         };
 
-        let materialize = std::panic::catch_unwind(|| materialize_scaffold(&malformed_document));
+        let materialize = std::panic::catch_unwind(|| materialize_unresolved(&malformed_document));
         assert!(materialize.is_ok());
         assert!(materialize.unwrap().is_err());
 

@@ -6,7 +6,7 @@ use crate::error::DomainError;
 /// The minimum marker run width supported by the snapshot grammar.
 pub const MIN_MARKER_WIDTH: usize = 7;
 /// Version of the internal manifest contract.
-pub const MANIFEST_SCHEMA_VERSION: u32 = 1;
+pub const MANIFEST_SCHEMA_VERSION: u32 = 2;
 
 /// A checked half-open byte range, `[start, end)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -425,6 +425,10 @@ impl ManifestTerm {
 pub struct ManifestRegion {
     pub region_index: usize,
     pub source_range: ByteRange,
+    /// The exact placeholder seed bytes `prepare` wrote for this region into
+    /// the workspace `resolved` file. `apply` refuses a resolved file in which
+    /// any region still contains these bytes.
+    pub seed: Box<[u8]>,
     pub terms: Vec<ManifestTerm>,
 }
 
@@ -531,6 +535,13 @@ impl Manifest {
                 });
             }
             previous_end = region.source_range.end;
+            if region.seed.is_empty() {
+                return Err(DomainError::InvalidManifest {
+                    message: "region seed metadata missing".into(),
+                    region_index: Some(region.region_index),
+                    path: None,
+                });
+            }
             if region.terms.is_empty() {
                 return Err(DomainError::InvalidManifest {
                     message: "manifest region must contain at least one term".into(),

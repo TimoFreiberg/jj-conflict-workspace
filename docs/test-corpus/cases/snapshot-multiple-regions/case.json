@@ -7,7 +7,7 @@
   "extraction": "adapted_generated",
   "term_representation": {
     "stored_bytes": "logical term bytes; remove one rendered separator EOL only when the closing marker lacks an EOL",
-    "resolved_uses": "stored logical term bytes",
+    "resolved_uses": "none; the resolved seed names term artifact paths but stores no term bytes",
     "materialized_separator_eol_field": "synthetic_separator_eol",
     "logical_final_newline_field": "artifacts[term].final_newline",
     "rendered_final_newline_rule": "logical final-newline fact unless synthetic_separator_eol is true; then rendered section has the separator EOL"
@@ -91,8 +91,8 @@
     "section_marker_width": 7
   },
   "resolved_construction": {
-    "rule": "Copy bytes outside each conflict region unchanged and replace each region with its first logical term payload (term-000).",
-    "semantic_claim": "Structural seed only; this is not a human-approved merge."
+    "rule": "Copy bytes outside each conflict region unchanged and replace each region with one self-describing JCW placeholder line naming the region index and its term artifact paths, mirroring the closing marker line's EOL.",
+    "semantic_claim": "Placeholder seed only; not a resolution. apply refuses any region that still contains its recorded seed bytes."
   },
   "artifacts": {
     "input.snapshot": {
@@ -104,8 +104,8 @@
     },
     "resolved": {
       "path": "docs/test-corpus/cases/snapshot-multiple-regions/resolved",
-      "byte_length": 50,
-      "sha256": "fce3ea943c4fcf9a0d795cca217eeb8341771fc188e2ae749a3fb6e89108c9c9",
+      "byte_length": 495,
+      "sha256": "c57faacd218a04631c66dc94364d0f8c1e2fdd2655361a5ce270562efc1e41b5",
       "line_ending_mode": "lf",
       "final_newline": true
     },
