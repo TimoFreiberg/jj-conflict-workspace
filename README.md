@@ -119,11 +119,10 @@ The test helper is an internal Cargo target used only by the feature-gated tests
 
 Releases are published by the `Release jcw binaries` GitHub Actions workflow, which runs only when a maintainer pushes a version tag. To publish:
 
-1. Bump the `version` in `Cargo.toml` and commit the change.
-2. Push a tag that is exactly `v` followed by that version, for example `v0.1.0`, pointing at the commit that contains the bump: the workflow reads the package version from the tagged revision.
-3. Wait for the workflow to build, package, and publish the release.
+1. Run `just release 0.2.0` with the new version: it bumps the `version` in `Cargo.toml` (and the matching entry in `Cargo.lock`), commits the bump, and pushes the `v0.2.0` tag to `origin`, which triggers the workflow. The tag points at the commit containing the bump; the workflow reads the package version from the tagged revision.
+2. Wait for the workflow to build, package, and publish the release.
 
-With `just` installed, step 2 is `just release`: it creates the `v<version>` tag at HEAD and pushes it to `origin` (refusing a dirty working copy, a HEAD without the release workflow, or an already-existing tag).
+`just release` without an argument skips the bump and tags the version already in `Cargo.toml` at HEAD (commit any version bump yourself first). Either way, the recipe refuses a dirty working copy, a HEAD without the release workflow, an already-existing tag, or a release commit that `main` cannot fast-forward to.
 
 The tag must exactly match the Cargo package version; a mismatched tag fails validation before anything is published. Rerunning the same tag reconciles the existing release (assets are replaced or removed as needed) and never creates a duplicate release. The workflow owns the release assets: on every run it removes any asset outside the allowlist below, so keep ancillary files out of the release itself.
 
