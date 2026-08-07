@@ -20,6 +20,9 @@ pub enum DomainError {
     NoConflictFound { path: PathBuf },
     /// A snapshot style other than the supported snapshot grammar was used.
     UnsupportedStyle { style: String },
+    /// The working-copy file's conflict layout does not match the snapshot
+    /// render it was prepared from.
+    ConflictMismatch { message: String },
     /// An imperative shell could not obtain or validate a path.
     PathUnavailable { path: PathBuf, message: String },
     /// An external command failed at the imperative boundary.
@@ -139,6 +142,9 @@ impl fmt::Display for DomainError {
                 f,
                 "unsupported snapshot style `{style}`; only Snapshot is supported"
             ),
+            Self::ConflictMismatch { message } => {
+                write!(f, "conflict layout mismatch: {message}")
+            }
             Self::PathUnavailable { path, message } => {
                 write!(
                     f,

@@ -22,7 +22,7 @@ Install the validated result only when ready:
 jcw apply --resolved-file <workspace>/resolved --write
 ```
 
-`prepare` invokes the installed `jj` executable with separate arguments, using `ui.conflict-marker-style=snapshot`, from the nearest ancestor containing a real `.jj` directory. `jcw` does not intentionally mutate the source: it captures the source before invoking JJ and checks its bytes and identity immediately afterward. If external JJ hooks or another process changed or replaced the source, prepare reports the change and does not roll it back; it also creates no workspace or manifest from stale bytes. The workspace is retained after success and after `apply`, so its manifest and numbered artifacts remain available for review.
+`prepare` invokes the installed `jj` executable with separate arguments, using `ui.conflict-marker-style=snapshot`, from the nearest ancestor containing a real `.jj` directory. The source file's conflict-marker style does not affect the workflow: `prepare` locates each conflict region by its style-independent outer markers in the working-copy file and uses the forced snapshot render only to extract the conflict terms. `jcw` does not intentionally mutate the source: it captures the source before invoking JJ and checks its bytes and identity immediately afterward. If external JJ hooks or another process changed or replaced the source, prepare reports the change and does not roll it back; it also creates no workspace or manifest from stale bytes. The workspace is retained after success and after `apply`, so its manifest and numbered artifacts remain available for review.
 
 ## Output and exit codes
 
@@ -79,9 +79,9 @@ The resolved seed is marker-free (it can never be mistaken for a native conflict
 
 ## Supported boundary
 
-V1 supports JJ **Snapshot** conflict materialization, arbitrary section arity including repeated bases, multiple regions, custom UTF-8 labels, invalid UTF-8 payload bytes, CRLF and mixed EOLs, and files without a final newline. The installed JJ CLI is the source of truth; this tool does not use `jj-lib` and does not implement a merge algorithm.
+V1 supports JJ **Snapshot** conflict materialization. The source file may be materialized in any jj conflict-marker style (`snapshot`, `diff`, `git`, `diff3`, `diff3-git`): `prepare` locates conflict regions by the style-independent outer markers (`<<<<<<<` / `>>>>>>>` lines) in the working-copy bytes, while the conflict terms are extracted from the forced `ui.conflict-marker-style=snapshot` render of `jj file show`. The prepare/apply workflow is therefore independent of the style your jj is configured with. Arbitrary section arity including repeated bases, multiple regions, custom UTF-8 labels, invalid UTF-8 payload bytes, CRLF and mixed EOLs, and files without a final newline are supported. The installed JJ CLI is the source of truth; this tool does not use `jj-lib` and does not implement a merge algorithm.
 
-The default/diff style, Git/diff3 markers, structural continuation styles, malformed snapshots, and ambiguous metadata are intentionally unsupported. Unsupported input fails conservatively rather than being guessed into terms. Marker-like payload lines shorter than the active marker width remain payload; active-width marker runs in a resolved file are rejected.
+The snapshot render itself must still use the Snapshot grammar: a snapshot render containing diff or Git/diff3 interior markers is unsupported and fails conservatively rather than being guessed into terms, as are structural continuation styles, malformed snapshots, and ambiguous metadata. Marker-like payload lines shorter than the active marker width remain payload; active-width marker runs in a resolved file are rejected.
 
 ## Safety and platform notes
 

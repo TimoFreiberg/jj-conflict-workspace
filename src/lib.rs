@@ -52,6 +52,12 @@ mod error_tests {
                 "unsupported snapshot style `merge`; only Snapshot is supported",
             ),
             (
+                DomainError::ConflictMismatch {
+                    message: "the working-copy file contains 2 conflict region(s) but the JJ snapshot render contains 1".into(),
+                },
+                "conflict layout mismatch: the working-copy file contains 2 conflict region(s) but the JJ snapshot render contains 1",
+            ),
+            (
                 DomainError::PathUnavailable {
                     path: PathBuf::from("file"),
                     message: "missing".into(),

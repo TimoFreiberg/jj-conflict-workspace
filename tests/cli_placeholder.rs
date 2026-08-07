@@ -1367,4 +1367,226 @@ No files were modified (dry-run).\n",
             fs::remove_dir_all(base).unwrap();
         }
     }
+
+    #[test]
+    fn prepare_and_apply_round_trip_with_diff_style_working_copy() {
+        // The working copy is materialized in the user's diff style while the
+        // forced snapshot render differs in its interior headers; the
+        // manifest must record working-copy coordinates and apply must accept
+        // a resolution that preserves the working-copy outside bytes.
+        let snapshot = b"prefix\n<<<<<<< conflict 1 of 1\n+++++++ side\nleft\n------- base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let working = b"prefix\n<<<<<<< conflict 1 of 1\n%%%%%%% diff from side\nleft\n%%%%%%% diff from base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let (base, repository, control) = fixture("prepare-diff-style");
+        let source = repository.join("source");
+        fs::write(&source, working).unwrap();
+        let before = snapshot_tree(&repository);
+        let snapshot_path = write_snapshot(&control, snapshot, "snapshot.bin");
+        let output_dir = base.join("output");
+        fs::create_dir(&output_dir).unwrap();
+        let output = run_prepare(
+            &repository,
+            Path::new("source"),
+            &output_dir,
+            &control,
+            Some(&snapshot_path),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        let workspace = decode_path(&output.stdout);
+        assert_eq!(fs::read(&source).unwrap(), working);
+        assert_eq!(snapshot_tree(&repository), before);
+
+        // The recorded region end sits exactly after the closing marker line
+        // in the working-copy bytes, not in the snapshot render's space.
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(workspace.join("manifest.json")).unwrap()).unwrap();
+        let range = manifest["regions"][0]["source_range"].as_object().unwrap();
+        let start = working.iter().position(|&byte| byte == b'<').unwrap();
+        let end = working.len() - b"suffix\n".len();
+        assert_eq!(range["start"].as_u64().unwrap() as usize, start);
+        assert_eq!(range["end"].as_u64().unwrap() as usize, end);
+        assert_ne!(end, snapshot.len() - b"suffix\n".len());
+
+        // Dry-run succeeds with a working-copy-space resolution.
+        fs::write(workspace.join("resolved"), b"prefix\nchanged\nsuffix\n").unwrap();
+        let dry_run = run_apply(&workspace, false);
+        assert!(
+            dry_run.status.success(),
+            "{}",
+            String::from_utf8_lossy(&dry_run.stderr)
+        );
+        assert!(dry_run.stderr.is_empty());
+        assert!(String::from_utf8_lossy(&dry_run.stdout).contains("+changed"));
+        assert_eq!(fs::read(&source).unwrap(), working);
+
+        // --write succeeds on identity-safe platforms and mutates only the
+        // region.
+        #[cfg(all(
+            unix,
+            any(
+                target_os = "linux",
+                target_os = "android",
+                target_os = "macos",
+                target_os = "ios"
+            )
+        ))]
+        {
+            let written = run_apply(&workspace, true);
+            assert!(
+                written.status.success(),
+                "{}",
+                String::from_utf8_lossy(&written.stderr)
+            );
+            assert!(written.stderr.is_empty());
+            assert_eq!(fs::read(&source).unwrap(), b"prefix\nchanged\nsuffix\n");
+        }
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn prepare_and_apply_round_trip_with_git_style_working_copy() {
+        // A git-style working copy (`=======` interior) round-trips the same
+        // way: prepare succeeds and apply accepts a region replacement.
+        let snapshot = b"prefix\n<<<<<<< conflict 1 of 1\n+++++++ side\nleft\n------- base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let working = b"prefix\n<<<<<<< conflict 1 of 1\nleft\n=======\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let (base, repository, control) = fixture("prepare-git-style");
+        let source = repository.join("source");
+        fs::write(&source, working).unwrap();
+        let snapshot_path = write_snapshot(&control, snapshot, "snapshot.bin");
+        let output_dir = base.join("output");
+        fs::create_dir(&output_dir).unwrap();
+        let output = run_prepare(
+            &repository,
+            Path::new("source"),
+            &output_dir,
+            &control,
+            Some(&snapshot_path),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        let workspace = decode_path(&output.stdout);
+        fs::write(workspace.join("resolved"), b"prefix\nchanged\nsuffix\n").unwrap();
+        let applied = run_apply(&workspace, false);
+        assert!(
+            applied.status.success(),
+            "{}",
+            String::from_utf8_lossy(&applied.stderr)
+        );
+        assert!(applied.stderr.is_empty());
+        assert!(String::from_utf8_lossy(&applied.stdout).contains("+changed"));
+        assert_eq!(fs::read(&source).unwrap(), working);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn apply_reports_manifest_alignment_error_for_legacy_manifest() {
+        // A manifest whose region ranges do not align with the source's
+        // markers (as produced by the pre-fix prepare, which recorded
+        // snapshot-render coordinates) must fail with an actionable
+        // re-run-`jcw prepare` error instead of a guard violation.
+        let snapshot = b"prefix\n<<<<<<< conflict 1 of 1\n+++++++ side\nleft\n------- base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let working = b"prefix\n<<<<<<< conflict 1 of 1\n%%%%%%% diff from side\nleft\n%%%%%%% diff from base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let (base, repository, control) = fixture("apply-legacy-manifest");
+        let source = repository.join("source");
+        fs::write(&source, working).unwrap();
+        let snapshot_path = write_snapshot(&control, snapshot, "snapshot.bin");
+        let output_dir = base.join("output");
+        fs::create_dir(&output_dir).unwrap();
+        let output = run_prepare(
+            &repository,
+            Path::new("source"),
+            &output_dir,
+            &control,
+            Some(&snapshot_path),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let workspace = decode_path(&output.stdout);
+        // Simulate the buggy prepare: region end in snapshot-render space.
+        let buggy_end = snapshot.len() - b"suffix\n".len();
+        rewrite_manifest(&workspace, |manifest| {
+            manifest["regions"][0]["source_range"]["end"] = Value::from(buggy_end);
+        });
+        fs::write(workspace.join("resolved"), b"prefix\nchanged\nsuffix\n").unwrap();
+        let applied = run_apply(&workspace, false);
+        assert_eq!(applied.status.code(), Some(1));
+        assert!(applied.stdout.is_empty());
+        let stderr = String::from_utf8_lossy(&applied.stderr);
+        assert!(
+            stderr.contains("re-run `jcw prepare`"),
+            "unexpected stderr: {stderr}"
+        );
+        assert!(
+            !stderr.contains("outside-region guard violation"),
+            "unexpected stderr: {stderr}"
+        );
+        assert_eq!(fs::read(&source).unwrap(), working);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn prepare_rejects_working_copy_conflict_mismatch() {
+        // A working copy whose conflict differs from the snapshot render
+        // (here: different outer-marker labels) must fail prepare with an
+        // actionable error and create no workspace.
+        let snapshot = b"prefix\n<<<<<<< conflict 1 of 1\n+++++++ side\nleft\n------- base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let working = b"prefix\n<<<<<<< conflict 1 of 1 renamed\n+++++++ side\nleft\n------- base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let (base, repository, control) = fixture("prepare-mismatch");
+        let source = repository.join("source");
+        fs::write(&source, working).unwrap();
+        let before = snapshot_tree(&repository);
+        let snapshot_path = write_snapshot(&control, snapshot, "snapshot.bin");
+        let output_dir = base.join("output");
+        fs::create_dir(&output_dir).unwrap();
+        let output = run_prepare(
+            &repository,
+            Path::new("source"),
+            &output_dir,
+            &control,
+            Some(&snapshot_path),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("conflict layout mismatch"),
+            "unexpected stderr: {stderr}"
+        );
+        assert!(stderr.contains("`source`"), "unexpected stderr: {stderr}");
+        assert!(
+            stderr.contains("opening marker line"),
+            "unexpected stderr: {stderr}"
+        );
+        assert_eq!(snapshot_tree(&repository), before);
+        assert_eq!(fs::read(&source).unwrap(), working);
+        assert_eq!(fs::read_dir(&output_dir).unwrap().count(), 0);
+        fs::remove_dir_all(base).unwrap();
+    }
 }

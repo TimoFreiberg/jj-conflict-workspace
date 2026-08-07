@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tempfile::Builder;
 
 use crate::cli::ApplyOptions;
-use crate::core::{render_unified_diff, validate_apply};
+use crate::core::{render_unified_diff, scan_conflict_regions, validate_apply};
 use crate::domain::{
     ApplyPlan, ApplyValidationRequest, ByteRange, MANIFEST_SCHEMA_VERSION, Manifest,
     ManifestRegion, ManifestTerm, Sha256Digest, SnapshotMarker, SnapshotStyle, SourceIdentity,
@@ -391,6 +391,45 @@ impl ApplyContext {
                 expected: format!("{} bytes and manifest digest", manifest.source_length),
                 actual: format!("{} bytes and current digest", source_secure.bytes.len()),
             });
+        }
+        // The manifest ranges live in the working-copy byte space of the file
+        // that produced them. A digest-matched source whose markers do not
+        // align with the recorded ranges can only come from a manifest created
+        // from a different rendering of the file; report that as an actionable
+        // manifest error instead of a confusing guard violation.
+        let scanned =
+            scan_conflict_regions(&source_secure.bytes, manifest.marker.outer_marker_width)
+                .map_err(|error| DomainError::InvalidManifest {
+                    message: format!(
+                        "conflict markers in the source file could not be scanned: {error}; the workspace manifest was created from a different rendering of the file — re-run `jcw prepare` to regenerate the workspace"
+                    ),
+                    region_index: None,
+                    path: Some(self.manifest_file.clone()),
+                })?;
+        if scanned.len() != manifest.regions.len() {
+            return Err(DomainError::InvalidManifest {
+                message: format!(
+                    "the source file contains {} conflict region(s) but the manifest records {}; the workspace manifest was created from a different rendering of the file — re-run `jcw prepare` to regenerate the workspace",
+                    scanned.len(),
+                    manifest.regions.len()
+                ),
+                region_index: None,
+                path: Some(self.manifest_file.clone()),
+            });
+        }
+        for (index, (scanned_region, manifest_region)) in
+            scanned.iter().zip(&manifest.regions).enumerate()
+        {
+            if scanned_region.range != manifest_region.source_range {
+                return Err(DomainError::InvalidManifest {
+                    message: format!(
+                        "region {index} range [{}, {}) does not align with the conflict markers in the source file; the workspace manifest was created from a different rendering of the file — re-run `jcw prepare` to regenerate the workspace",
+                        manifest_region.source_range.start, manifest_region.source_range.end
+                    ),
+                    region_index: Some(index),
+                    path: Some(self.manifest_file.clone()),
+                });
+            }
         }
         let resolved_secure = read_secure_file(&self.resolved_file, "resolved file")?;
         if same_canonical(&self.resolved_file, &repository.canonical_source)? {

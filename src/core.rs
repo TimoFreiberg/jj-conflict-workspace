@@ -106,6 +106,12 @@ fn input_error(
     }
 }
 
+fn conflict_mismatch(message: impl Into<String>) -> DomainError {
+    DomainError::ConflictMismatch {
+        message: message.into(),
+    }
+}
+
 fn unsupported_style(input: &[u8], line: Line, width: usize) -> Option<&'static str> {
     let families = [
         (b'%', "Diff"),
@@ -467,6 +473,235 @@ pub fn parse_snapshot(input: &[u8]) -> Result<ParsedDocument, DomainError> {
     ParsedDocument::new(input.to_vec(), regions, marker)
 }
 
+/// One conflict region located by style-independent outer markers in a source
+/// file that may be materialized in any jj conflict-marker style.
+#[derive(Debug)]
+pub(crate) struct ScannedRegion {
+    /// The full byte span of the region in the scanned source, from the start
+    /// of the opening marker line to the end of the closing marker line.
+    pub(crate) range: ByteRange,
+    /// The opening marker line content, excluding its EOL.
+    opening_content: ByteRange,
+    /// The closing marker line content, excluding its EOL.
+    closing_content: ByteRange,
+}
+
+/// Locate every conflict region in a source file using only the outer markers
+/// that every jj conflict-marker style shares.
+///
+/// The opening line must start with a `<` run of exactly `width` markers and
+/// the closing line with a `>` run of exactly `width` markers. Interior lines
+/// — section headers of any style (`+++++++`, `-------`, `%%%%%%%`,
+/// `|||||||`, `=======`), payloads, and marker-like content — are never
+/// interpreted, which is what makes the scan independent of the materialized
+/// conflict style. The opening and closing content (excluding EOL) are
+/// retained so the caller can verify that the scanned regions correspond to
+/// the snapshot render's regions label for label.
+pub(crate) fn scan_conflict_regions(
+    source: &[u8],
+    width: usize,
+) -> Result<Vec<ScannedRegion>, DomainError> {
+    let lines = scan_lines(source);
+    let mut regions = Vec::new();
+    let mut line_index = 0;
+
+    while let Some(&line) = lines.get(line_index) {
+        if let Some(run) = marker_run(source, line, b'<') {
+            if run.width < MIN_MARKER_WIDTH {
+                // A run shorter than the minimum marker width cannot be an
+                // opening marker; it is ordinary content (mirrors
+                // `parse_snapshot`).
+                line_index = line_index.checked_add(1).ok_or_else(|| {
+                    input_error("line index overflowed", None, Some(line.full.start))
+                })?;
+                continue;
+            }
+            if run.width != width {
+                return Err(input_error(
+                    format!(
+                        "opening marker run has width {}; expected document width {width}",
+                        run.width
+                    ),
+                    Some(regions.len()),
+                    Some(line.full.start),
+                ));
+            }
+
+            let mut cursor = line_index.checked_add(1).ok_or_else(|| {
+                input_error(
+                    "line index overflowed",
+                    Some(regions.len()),
+                    Some(line.full.start),
+                )
+            })?;
+            let closing = loop {
+                let Some(&candidate) = lines.get(cursor) else {
+                    return Err(input_error(
+                        "unterminated conflict region; no same-width closing marker was found",
+                        Some(regions.len()),
+                        Some(source.len()),
+                    ));
+                };
+                if let Some(run) = marker_run(source, candidate, b'>') {
+                    if run.width > width {
+                        return Err(input_error(
+                            format!(
+                                "closing marker run has width {}; expected exactly {width}",
+                                run.width
+                            ),
+                            Some(regions.len()),
+                            Some(candidate.full.start),
+                        ));
+                    }
+                    if run.width == width {
+                        break candidate;
+                    }
+                }
+                if let Some(run) = marker_run(source, candidate, b'<') {
+                    if run.width >= width {
+                        return Err(input_error(
+                            "nested opening marker before the current conflict closed",
+                            Some(regions.len()),
+                            Some(candidate.full.start),
+                        ));
+                    }
+                }
+                cursor = cursor.checked_add(1).ok_or_else(|| {
+                    input_error("line index overflowed", None, Some(source.len()))
+                })?;
+            };
+            regions.push(ScannedRegion {
+                range: ByteRange::new(line.full.start, closing.full.end)?,
+                opening_content: ByteRange::new(line.content.start, line.content.end)?,
+                closing_content: ByteRange::new(closing.content.start, closing.content.end)?,
+            });
+            line_index = cursor.checked_add(1).ok_or_else(|| {
+                input_error(
+                    "line index overflowed",
+                    Some(regions.len()),
+                    Some(closing.full.end),
+                )
+            })?;
+        } else {
+            line_index = line_index
+                .checked_add(1)
+                .ok_or_else(|| input_error("line index overflowed", None, Some(source.len())))?;
+        }
+    }
+    Ok(regions)
+}
+
+/// Re-map parsed snapshot regions onto a source file that may be materialized
+/// in any jj conflict-marker style.
+///
+/// The snapshot render and the working-copy file are different bytes whenever
+/// the working copy uses a conflict style other than `snapshot`, so the parsed
+/// region ranges cannot be used against the working copy. This function
+/// locates the regions by their style-independent outer markers in the working
+/// copy and verifies that the working copy's conflicts correspond exactly to
+/// the parsed ones (same count, same outer-marker labels). The returned
+/// regions live in the working-copy byte space and keep the parsed terms.
+pub(crate) fn remap_regions_to_source(
+    parsed: &ParsedDocument,
+    working_source: &[u8],
+) -> Result<Vec<ConflictRegion>, DomainError> {
+    let parsed_lines = scan_lines(&parsed.source);
+    let mut parsed_bounds = Vec::with_capacity(parsed.regions.len());
+    for (region_index, region) in parsed.regions.iter().enumerate() {
+        let opening = parsed_lines
+            .iter()
+            .copied()
+            .find(|line| line.full.start == region.source_range.start)
+            .ok_or_else(|| {
+                DomainError::invalid(format!(
+                    "parsed region {region_index} has no opening marker line at byte offset {}",
+                    region.source_range.start
+                ))
+            })?;
+        let closing = parsed_lines
+            .iter()
+            .copied()
+            .find(|line| line.full.end == region.source_range.end)
+            .ok_or_else(|| {
+                DomainError::invalid(format!(
+                    "parsed region {region_index} has no closing marker line ending at byte {}",
+                    region.source_range.end
+                ))
+            })?;
+        parsed_bounds.push((opening, closing));
+    }
+
+    let scanned = scan_conflict_regions(working_source, parsed.marker.outer_marker_width)?;
+    if scanned.len() != parsed.regions.len() {
+        return Err(conflict_mismatch(format!(
+            "the working-copy file contains {} conflict region(s) but the JJ snapshot render contains {}; the working copy and the snapshot describe different conflicts. Commit, abandon, or revert the working-copy changes so the file matches the conflict at `@`, then re-run `jcw prepare`",
+            scanned.len(),
+            parsed.regions.len()
+        )));
+    }
+
+    let mut regions = Vec::with_capacity(parsed.regions.len());
+    for (region_index, (parsed_region, (opening, closing))) in
+        parsed.regions.iter().zip(&parsed_bounds).enumerate()
+    {
+        let scanned_region = &scanned[region_index];
+        let parsed_opening = parsed
+            .source
+            .get(opening.content.start..opening.content.end)
+            .ok_or_else(|| {
+                DomainError::invalid(format!(
+                    "parsed region {region_index} opening content is outside the snapshot bytes"
+                ))
+            })?;
+        let working_opening = working_source
+            .get(
+                scanned_region.opening_content.start..scanned_region.opening_content.end,
+            )
+            .ok_or_else(|| {
+                DomainError::invalid(format!(
+                    "scanned region {region_index} opening content is outside the working-copy bytes"
+                ))
+            })?;
+        if working_opening != parsed_opening {
+            return Err(conflict_mismatch(format!(
+                "region {region_index} opening marker line is `{}` in the working-copy file but `{}` in the JJ snapshot render; the working copy and the snapshot must describe the same conflict. Commit, abandon, or revert the working-copy changes so the file matches the conflict at `@`, then re-run `jcw prepare`",
+                escape_bytes(working_opening),
+                escape_bytes(parsed_opening),
+            )));
+        }
+        let parsed_closing = parsed
+            .source
+            .get(closing.content.start..closing.content.end)
+            .ok_or_else(|| {
+                DomainError::invalid(format!(
+                    "parsed region {region_index} closing content is outside the snapshot bytes"
+                ))
+            })?;
+        let working_closing = working_source
+            .get(
+                scanned_region.closing_content.start..scanned_region.closing_content.end,
+            )
+            .ok_or_else(|| {
+                DomainError::invalid(format!(
+                    "scanned region {region_index} closing content is outside the working-copy bytes"
+                ))
+            })?;
+        if working_closing != parsed_closing {
+            return Err(conflict_mismatch(format!(
+                "region {region_index} closing marker line is `{}` in the working-copy file but `{}` in the JJ snapshot render; the working copy and the snapshot must describe the same conflict. Commit, abandon, or revert the working-copy changes so the file matches the conflict at `@`, then re-run `jcw prepare`",
+                escape_bytes(working_closing),
+                escape_bytes(parsed_closing),
+            )));
+        }
+        regions.push(ConflictRegion::new(
+            scanned_region.range,
+            parsed_region.marker,
+            parsed_region.terms.clone(),
+        )?);
+    }
+    Ok(regions)
+}
+
 /// Build the exact placeholder seed bytes for a conflict region: one
 /// self-describing ASCII line naming the region index and every term artifact
 /// path, followed by `trailing_eol` (the closing marker line's EOL mirrored
@@ -506,21 +741,45 @@ pub(crate) fn region_trailing_eol(source: &[u8], range: ByteRange) -> &'static [
 /// Materialize the unresolved editing canvas and report where each region's
 /// seed line starts.
 ///
-/// Returns the canvas bytes plus, in region order, the byte offset at which
-/// each region's `JCW-UNRESOLVED-CONFLICT-REGION-NNN` seed line begins. The
-/// offsets let the CLI tell the user which line number each marker occupies
-/// without re-scanning (and potentially mis-matching) the outside content.
+/// `source` is the byte space the region ranges live in (the working-copy
+/// file for the prepare path, the parsed snapshot for the document path), so
+/// manifest, source, and canvas always share one byte space. Returns the
+/// canvas bytes plus, in region order, the byte offset at which each region's
+/// `JCW-UNRESOLVED-CONFLICT-REGION-NNN` seed line begins. The offsets let the
+/// CLI tell the user which line number each marker occupies without
+/// re-scanning (and potentially mis-matching) the outside content.
 pub(crate) fn materialize_unresolved_with_seed_offsets(
-    document: &ParsedDocument,
+    source: &[u8],
+    regions: &[ConflictRegion],
 ) -> Result<(Vec<u8>, Vec<usize>), DomainError> {
-    document.validate()?;
+    // The regions must be source-ordered, non-overlapping, and within the
+    // source bytes. `ParsedDocument::validate` enforces these invariants for
+    // the document path; remapped regions are already validated by
+    // `ConflictRegion::new` on construction, so only the ordering and bounds
+    // checks remain here.
+    let mut previous_end = 0;
+    for (index, region) in regions.iter().enumerate() {
+        if !region.source_range.within_source(source.len()) {
+            return Err(DomainError::invalid_region(
+                "region range exceeds source length",
+                index,
+            ));
+        }
+        if index > 0 && region.source_range.start < previous_end {
+            return Err(DomainError::invalid_region(
+                "regions overlap or are out of source order",
+                index,
+            ));
+        }
+        previous_end = region.source_range.end;
+    }
 
     let mut output = Vec::new();
-    let mut seed_offsets = Vec::with_capacity(document.regions.len());
+    let mut seed_offsets = Vec::with_capacity(regions.len());
     let mut cursor = 0;
-    for (region_index, region) in document.regions.iter().enumerate() {
+    for (region_index, region) in regions.iter().enumerate() {
         let range = region.source_range;
-        let outside = document.source.get(cursor..range.start).ok_or_else(|| {
+        let outside = source.get(cursor..range.start).ok_or_else(|| {
             input_error(
                 "region gap is outside the source bytes",
                 Some(region_index),
@@ -529,11 +788,11 @@ pub(crate) fn materialize_unresolved_with_seed_offsets(
         })?;
         output.extend_from_slice(outside);
         seed_offsets.push(output.len());
-        let trailing_eol = region_trailing_eol(&document.source, range);
+        let trailing_eol = region_trailing_eol(source, range);
         output.extend_from_slice(&region_seed(region_index, &region.terms, trailing_eol));
         cursor = range.end;
     }
-    let suffix = document.source.get(cursor..).ok_or_else(|| {
+    let suffix = source.get(cursor..).ok_or_else(|| {
         input_error(
             "source suffix is outside the source bytes",
             None,
@@ -549,7 +808,9 @@ pub(crate) fn materialize_unresolved_with_seed_offsets(
 /// seed is not a resolution: `apply` refuses any resolved file that still
 /// contains a recorded seed.
 pub fn materialize_unresolved(document: &ParsedDocument) -> Result<Vec<u8>, DomainError> {
-    materialize_unresolved_with_seed_offsets(document).map(|(bytes, _)| bytes)
+    document.validate()?;
+    materialize_unresolved_with_seed_offsets(&document.source, &document.regions)
+        .map(|(bytes, _)| bytes)
 }
 
 /// Validate a resolved file and produce an original-coordinate apply plan.
@@ -1296,12 +1557,20 @@ fn hex_digest(digest: [u8; 32]) -> String {
 #[cfg(test)]
 mod apply_tests {
     use super::*;
-    use crate::domain::{ManifestRegion, ManifestTerm};
+    use crate::domain::{ManifestRegion, ManifestTerm, SnapshotMarker};
 
     fn manifest_for(source: &[u8]) -> Manifest {
         let document = parse_snapshot(source).unwrap();
-        let regions = document
-            .regions
+        manifest_for_regions(source, &document.regions, document.marker)
+    }
+
+    /// Build a manifest whose region ranges live in `source`'s byte space.
+    fn manifest_for_regions(
+        source: &[u8],
+        regions: &[ConflictRegion],
+        marker: SnapshotMarker,
+    ) -> Manifest {
+        let manifest_regions = regions
             .iter()
             .enumerate()
             .map(|(region_index, region)| ManifestRegion {
@@ -1310,7 +1579,7 @@ mod apply_tests {
                 seed: region_seed(
                     region_index,
                     &region.terms,
-                    region_trailing_eol(&document.source, region.source_range),
+                    region_trailing_eol(source, region.source_range),
                 )
                 .into_boxed_slice(),
                 terms: region
@@ -1330,9 +1599,9 @@ mod apply_tests {
             crate::domain::MANIFEST_SCHEMA_VERSION,
             crate::domain::SourceIdentity::new("/repo/file"),
             crate::domain::Sha256Digest(sha256(source)),
-            document.marker,
+            marker,
             source.len(),
-            regions,
+            manifest_regions,
         )
         .unwrap()
     }
@@ -1712,6 +1981,226 @@ mod apply_tests {
             &*plan.hunks[0].replacement,
             b"JCW-UNRESOLVED-CONFLICT-REGION-000: partial text\n"
         );
+    }
+
+    #[test]
+    fn remap_matches_diff_style_working_copy() {
+        // The JJ snapshot render (forced snapshot style) and the working-copy
+        // file (user-configured diff style) describe the same conflict with
+        // identical outer markers but different interior headers and byte
+        // spans. This is the exact incident shape that broke apply when the
+        // manifest recorded snapshot-render coordinates.
+        let snapshot = b"prefix\n<<<<<<< conflict 1 of 1\n+++++++ side\nleft\n------- base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let working = b"prefix\n<<<<<<< conflict 1 of 1\n%%%%%%% diff from side\nleft\n%%%%%%% diff from base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let document = parse_snapshot(snapshot).unwrap();
+        let parsed_range = document.regions[0].source_range;
+        let regions = remap_regions_to_source(&document, working).unwrap();
+
+        let start = working.iter().position(|&byte| byte == b'<').unwrap();
+        let end = working.len() - b"suffix\n".len();
+        assert_eq!(regions[0].source_range, ByteRange { start, end });
+        // The snapshot render spans a different (shorter) byte range; the
+        // remapped region must live in the working-copy byte space.
+        assert_ne!(regions[0].source_range, parsed_range);
+        assert_eq!(regions[0].terms, document.regions[0].terms);
+
+        // The editing canvas is built from working-copy bytes.
+        let (canvas, seed_offsets) =
+            materialize_unresolved_with_seed_offsets(working, &regions).unwrap();
+        assert_eq!(seed_offsets, vec![start]);
+        assert_eq!(
+            canvas,
+            [
+                b"prefix\n".as_slice(),
+                region_seed(0, &regions[0].terms, b"\n").as_slice(),
+                b"suffix\n".as_slice(),
+            ]
+            .concat()
+        );
+
+        // A resolution that preserves the working-copy outside bytes and
+        // replaces the region is accepted — the exact shape the old
+        // snapshot-space manifest rejected.
+        let manifest = manifest_for_regions(working, &regions, document.marker);
+        let plan = validate_apply(ApplyValidationRequest {
+            manifest: &manifest,
+            original_source: working,
+            resolved: b"prefix\nresolved\nsuffix\n",
+        })
+        .unwrap();
+        assert_eq!(plan.hunks.len(), 1);
+        assert_eq!(plan.hunks[0].original_range, regions[0].source_range);
+        assert_eq!(&*plan.hunks[0].replacement, b"resolved\n");
+    }
+
+    #[test]
+    fn scan_conflict_regions_ignores_interior_styles() {
+        // Every jj conflict-marker style shares the outer markers; only the
+        // interior section headers differ. The scanner must locate the region
+        // in all of them and never interpret interior lines.
+        let samples: [&[u8]; 5] = [
+            // diff style
+            b"prefix\n<<<<<<< conflict 1 of 1\n%%%%%%% diff from side\nleft\n%%%%%%% diff from base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n",
+            // diff3 style
+            b"prefix\n<<<<<<< conflict 1 of 1\n||||||| base\nbase\n+++++++ side\nleft\n>>>>>>> conflict 1 of 1 ends\nsuffix\n",
+            // git style
+            b"prefix\n<<<<<<< conflict 1 of 1\nleft\n=======\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n",
+            // diff3-git combined style
+            b"prefix\n<<<<<<< conflict 1 of 1\n||||||| base\nbase\n+++++++ side\nleft\n=======\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n",
+            // snapshot interior with a base-only section
+            b"prefix\n<<<<<<< conflict 1 of 1\n------- base\nleft\n>>>>>>> conflict 1 of 1 ends\nsuffix\n",
+        ];
+        for sample in samples {
+            let scanned = scan_conflict_regions(sample, 7).unwrap();
+            assert_eq!(
+                scanned.len(),
+                1,
+                "sample {:?}",
+                String::from_utf8_lossy(sample)
+            );
+            let start = sample.iter().position(|&byte| byte == b'<').unwrap();
+            let end = sample.len() - b"suffix\n".len();
+            assert_eq!(
+                scanned[0].range,
+                ByteRange { start, end },
+                "sample {:?}",
+                String::from_utf8_lossy(sample)
+            );
+        }
+    }
+
+    #[test]
+    fn scan_conflict_regions_multi_region_and_error_cases() {
+        // Multiple diff-style regions are located in order with exact ranges.
+        let two = b"a\n<<<<<<< conflict 1 of 2\n%%%%%%% diff from side\nx\n>>>>>>> conflict 1 of 2 ends\nb\n<<<<<<< conflict 2 of 2\n%%%%%%% diff from side\ny\n>>>>>>> conflict 2 of 2 ends\nz\n";
+        let scanned = scan_conflict_regions(two, 7).unwrap();
+        assert_eq!(scanned.len(), 2);
+        let first_start = two.iter().position(|&byte| byte == b'<').unwrap();
+        // The second region's opening marker line starts right after the
+        // `b\n` separator line.
+        let second_start = two
+            .windows(b"\n<<<<<<<".len())
+            .rposition(|window| window == b"\n<<<<<<<")
+            .unwrap()
+            + 1;
+        assert_eq!(first_start, 2);
+        // The `b\n` separator line (2 bytes) sits between the two regions.
+        assert_eq!(
+            scanned[0].range,
+            ByteRange {
+                start: first_start,
+                end: second_start - b"b\n".len(),
+            }
+        );
+        assert_eq!(
+            scanned[1].range,
+            ByteRange {
+                start: second_start,
+                end: two.len() - b"z\n".len(),
+            }
+        );
+
+        // A closing marker run wider than the active width is an error.
+        let overwide_close = b"p\n<<<<<<< conflict 1 of 1\n%%%%%%% diff from side\nx\n>>>>>>>> conflict 1 of 1 ends\ns\n";
+        let error = scan_conflict_regions(overwide_close, 7).unwrap_err();
+        assert!(matches!(error, DomainError::InvalidInput { .. }), "{error}");
+        assert!(error.to_string().contains("closing marker run has width 8"));
+
+        // An unterminated region is an error.
+        let unterminated = b"p\n<<<<<<< conflict 1 of 1\n%%%%%%% diff from side\nx\n";
+        let error = scan_conflict_regions(unterminated, 7).unwrap_err();
+        assert!(matches!(error, DomainError::InvalidInput { .. }), "{error}");
+        assert!(error.to_string().contains("unterminated"));
+    }
+
+    #[test]
+    fn remap_ignores_eol_differences_between_render_and_working_copy() {
+        // The outer-marker label comparison excludes EOL bytes, so a working
+        // copy using different line endings than the snapshot render still
+        // remaps and the canvas mirrors the working copy's EOLs.
+        let snapshot = b"prefix\n<<<<<<< conflict 1 of 1\n+++++++ side\nleft\n------- base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let working = b"prefix\r\n<<<<<<< conflict 1 of 1\r\n%%%%%%% diff from side\r\nleft\r\n%%%%%%% diff from base\r\nright\r\n>>>>>>> conflict 1 of 1 ends\r\nsuffix\r\n";
+        let document = parse_snapshot(snapshot).unwrap();
+        let regions = remap_regions_to_source(&document, working).unwrap();
+
+        let start = working.iter().position(|&byte| byte == b'<').unwrap();
+        let end = working.len() - b"suffix\r\n".len();
+        assert_eq!(regions[0].source_range, ByteRange { start, end });
+
+        let (canvas, _) = materialize_unresolved_with_seed_offsets(working, &regions).unwrap();
+        assert_eq!(
+            canvas,
+            [
+                b"prefix\r\n".as_slice(),
+                region_seed(0, &regions[0].terms, b"\r\n").as_slice(),
+                b"suffix\r\n".as_slice(),
+            ]
+            .concat()
+        );
+    }
+
+    #[test]
+    fn remap_rejects_count_label_width_mismatch() {
+        let snapshot = b"prefix\n<<<<<<< conflict 1 of 1\n+++++++ side\nleft\n------- base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let document = parse_snapshot(snapshot).unwrap();
+
+        // Different region count: the working copy cannot be the same conflict.
+        let two_regions = b"prefix\n<<<<<<< conflict 1 of 2\n+++++++ side\nleft\n------- base\nright\n>>>>>>> conflict 1 of 2 ends\n<<<<<<< conflict 2 of 2\n+++++++ side\na\n------- base\nb\n>>>>>>> conflict 2 of 2 ends\nsuffix\n";
+        let error = remap_regions_to_source(&document, two_regions).unwrap_err();
+        assert!(
+            matches!(error, DomainError::ConflictMismatch { .. }),
+            "{error}"
+        );
+        assert!(error.to_string().contains("2 conflict region(s)"));
+
+        // Different outer-marker labels: same shape, different conflict.
+        let relabeled = b"prefix\n<<<<<<< renamed\n+++++++ side\nleft\n------- base\nright\n>>>>>>> renamed ends\nsuffix\n";
+        let error = remap_regions_to_source(&document, relabeled).unwrap_err();
+        assert!(
+            matches!(error, DomainError::ConflictMismatch { .. }),
+            "{error}"
+        );
+        let rendered = error.to_string();
+        assert!(rendered.contains("region 0"), "{rendered}");
+        assert!(rendered.contains("opening marker line"), "{rendered}");
+        assert!(rendered.contains("conflict 1 of 1"), "{rendered}");
+        assert!(rendered.contains("renamed"), "{rendered}");
+
+        // Different marker width in the working copy is an input error rather
+        // than a silent mis-parse.
+        let wider = b"prefix\n<<<<<<<<< conflict 1 of 1\n+++++++++ side\nleft\n-------- base\nright\n>>>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let error = remap_regions_to_source(&document, wider).unwrap_err();
+        assert!(matches!(error, DomainError::InvalidInput { .. }), "{error}");
+    }
+
+    #[test]
+    fn suffix_tampering_still_rejected() {
+        // The outside-region guard is unchanged when the manifest was built
+        // from remapped working-copy coordinates: changing the suffix is still
+        // a guard violation, not a valid edit.
+        let snapshot = b"prefix\n<<<<<<< conflict 1 of 1\n+++++++ side\nleft\n------- base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let working = b"prefix\n<<<<<<< conflict 1 of 1\n%%%%%%% diff from side\nleft\n%%%%%%% diff from base\nright\n>>>>>>> conflict 1 of 1 ends\nsuffix\n";
+        let document = parse_snapshot(snapshot).unwrap();
+        let regions = remap_regions_to_source(&document, working).unwrap();
+        let manifest = manifest_for_regions(working, &regions, document.marker);
+
+        let error = validate_apply(ApplyValidationRequest {
+            manifest: &manifest,
+            original_source: working,
+            resolved: b"prefix\nnew\nTAIL\n",
+        })
+        .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                DomainError::GuardViolation {
+                    region_index: 0,
+                    ..
+                }
+            ),
+            "{error}"
+        );
+        assert!(error.to_string().contains("source suffix"));
     }
 }
 

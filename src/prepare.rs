@@ -10,9 +10,11 @@ use std::time::UNIX_EPOCH;
 use crate::cli::PrepareOptions;
 use crate::core::{
     materialize_unresolved_with_seed_offsets, parse_snapshot, region_seed, region_trailing_eol,
+    remap_regions_to_source,
 };
 use crate::domain::{
-    MANIFEST_SCHEMA_VERSION, Manifest, ManifestRegion, ManifestTerm, Sha256Digest, SourceIdentity,
+    ConflictRegion, MANIFEST_SCHEMA_VERSION, Manifest, ManifestRegion, ManifestTerm, Sha256Digest,
+    SourceIdentity,
 };
 use crate::error::DomainError;
 use crate::path_output::encode_path_for_output;
@@ -162,16 +164,32 @@ where
         },
         other => describe_parse_failure(&source.repository_relative, &snapshot, other),
     })?;
-    let (resolved, seed_offsets) = materialize_unresolved_with_seed_offsets(&document).map_err(
-        |error| {
+    // The parsed regions live in the snapshot render's byte space; re-map
+    // them onto the working-copy bytes so manifest, source, and canvas share
+    // one byte space regardless of the working copy's conflict-marker style.
+    let regions =
+        remap_regions_to_source(&document, &source.original).map_err(|error| match error {
+            DomainError::ConflictMismatch { message } => DomainError::ConflictMismatch {
+                message: format!(
+                    "`{}`: {message}",
+                    encode_path_for_output(&source.repository_relative)
+                ),
+            },
+            other => DomainError::invalid(format!(
+                "`{}`: the working-copy file cannot be scanned as a conflict matching the JJ snapshot render: {}",
+                encode_path_for_output(&source.repository_relative),
+                render_without_prefix(&other),
+            )),
+        })?;
+    let (resolved, seed_offsets) =
+        materialize_unresolved_with_seed_offsets(&source.original, &regions).map_err(|error| {
             DomainError::invalid(format!(
                 "JJ snapshot output could not be materialized: {}",
                 render_without_prefix(&error)
             ))
-        },
-    )?;
+        })?;
 
-    let manifest = make_manifest(&source, &document)?;
+    let manifest = make_manifest(&source, &document, &regions)?;
     let workspace = match writer.create_workspace(options.output_dir.as_deref()) {
         Ok(workspace) => workspace,
         Err(mut error) => {
@@ -645,9 +663,9 @@ fn push_byte_escape(output: &mut String, byte: u8) {
 fn make_manifest(
     source: &SourceContext,
     document: &crate::domain::ParsedDocument,
+    regions: &[ConflictRegion],
 ) -> Result<Manifest, DomainError> {
-    let regions = document
-        .regions
+    let manifest_regions = regions
         .iter()
         .enumerate()
         .map(|(region_index, region)| ManifestRegion {
@@ -656,7 +674,7 @@ fn make_manifest(
             seed: region_seed(
                 region_index,
                 &region.terms,
-                region_trailing_eol(&document.source, region.source_range),
+                region_trailing_eol(&source.original, region.source_range),
             )
             .into_boxed_slice(),
             terms: region
@@ -679,7 +697,7 @@ fn make_manifest(
         Sha256Digest(sha256(&source.original)),
         document.marker,
         source.original.len(),
-        regions,
+        manifest_regions,
     )
 }
 
@@ -1439,7 +1457,15 @@ mod tests {
         fs::create_dir(&repository).unwrap();
         fs::create_dir(repository.join(".jj")).unwrap();
         let source = repository.join("source");
-        fs::write(&source, vec![b'x'; 1024]).unwrap();
+        // The on-disk source must contain the same conflict bytes as the
+        // injected snapshot: the canvas and manifest ranges are derived from
+        // the working-copy bytes, so a source without the matching conflict
+        // would be rejected as a working-copy/snapshot mismatch.
+        fs::write(
+            &source,
+            b"<<<<<<< opening\n+++++++ side\nside\n------- base\nbase\n>>>>>>> closing\n",
+        )
+        .unwrap();
         let output = temporary.path().join(name);
         fs::create_dir(&output).unwrap();
         (
@@ -1520,6 +1546,9 @@ mod tests {
     fn prepare_report_lists_marker_lines_with_line_numbers() {
         let snapshot = b"prefix\n<<<<<<< opening\n+++++++ side\nleft\n------- base\nright\n>>>>>>> closing\nmiddle\n<<<<<<< opening\n+++++++ side\na\n------- base\nb\n>>>>>>> closing\nsuffix\n";
         let (temporary, options) = writer_test_fixture("marker-guide");
+        // The on-disk source must contain the same conflict bytes as the
+        // injected snapshot (the fixture default is the one-region snapshot).
+        fs::write(&options.file, snapshot).unwrap();
         let mut writer = RealWorkspaceWriter;
         let report = run_with_writer(&options, &mut writer, |_| Ok(snapshot.to_vec())).unwrap();
         assert!(
@@ -1542,6 +1571,47 @@ mod tests {
                     line: "JCW-UNRESOLVED-CONFLICT-REGION-001: replace this line with the final content for this conflict, or delete the line to drop the content. Terms: regions/region-001/term-000.term, regions/region-001/term-001.term".to_owned(),
                 },
             ]
+        );
+        drop(temporary);
+    }
+
+    #[test]
+    fn manifest_records_working_copy_coordinates_when_styles_differ() {
+        // The working-copy file is materialized in diff style while the
+        // injected snapshot render is snapshot style; the manifest ranges and
+        // the editing canvas must live in the working-copy byte space.
+        let snapshot = b"prefix\n<<<<<<< opening\n+++++++ side\nleft\n------- base\nright\n>>>>>>> closing\nsuffix\n";
+        let working = b"prefix\n<<<<<<< opening\n%%%%%%% diff from side\nleft\n%%%%%%% diff from base\nright\n>>>>>>> closing\nsuffix\n";
+        let (temporary, options) = writer_test_fixture("working-copy-coordinates");
+        fs::write(&options.file, working).unwrap();
+        let mut writer = RealWorkspaceWriter;
+        let report = run_with_writer(&options, &mut writer, |_| Ok(snapshot.to_vec())).unwrap();
+
+        let manifest_path = report.workspace.join("manifest.json");
+        let manifest =
+            crate::apply::decode_manifest(&fs::read(&manifest_path).unwrap(), &manifest_path)
+                .unwrap();
+        let start = working.iter().position(|&byte| byte == b'<').unwrap();
+        let end = working.len() - b"suffix\n".len();
+        assert_eq!(manifest.regions[0].source_range, ByteRange { start, end });
+        // The snapshot render's region span is shorter; the manifest must not
+        // record snapshot-render coordinates.
+        let snapshot_end = snapshot.len() - b"suffix\n".len();
+        assert_ne!(end, snapshot_end);
+
+        // The canvas mirrors the working-copy bytes: outside bytes are the
+        // working copy's, and the seed mirrors the working copy's EOL.
+        let document = crate::core::parse_snapshot(snapshot).unwrap();
+        let seed = region_seed(0, &document.regions[0].terms, b"\n");
+        let resolved = fs::read(report.workspace.join("resolved")).unwrap();
+        assert_eq!(
+            resolved,
+            [
+                b"prefix\n".as_slice(),
+                seed.as_slice(),
+                b"suffix\n".as_slice(),
+            ]
+            .concat()
         );
         drop(temporary);
     }
