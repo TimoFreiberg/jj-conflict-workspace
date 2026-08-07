@@ -128,6 +128,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
     steps:
+      # gh resolves the target repository from git remotes in the working
+      # tree, so without a checkout every `gh release ...` call in this job
+      # fails with "not a git repository". The archives come from
+      # download-artifact, not this tree; the checkout only supplies git
+      # context for gh (the release tag is verified against the remote).
+      - name: Check out triggering revision
+        uses: actions/checkout@v4
       - name: Download release archives
         uses: actions/download-artifact@v4
         with:
