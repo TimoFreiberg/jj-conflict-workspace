@@ -3,6 +3,8 @@ name = "jj-conflict-workspace"
 version = "0.2.1"
 edition = "2024"
 repository = "https://github.com/TimoFreiberg/jj-conflict-workspace"
+description = "CLI tool that offers coding agents a more convenient view on jj conflicts"
+license = "MIT"
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/jcw-v{ version }-{ target }.tar.gz"
