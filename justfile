@@ -7,11 +7,11 @@ version:
     @cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; pkgs=json.load(sys.stdin)["packages"]; assert len(pkgs) == 1, "expected exactly one package"; print(pkgs[0]["version"])'
 
 # Bump the version to <version>, commit the bump, tag it `v<version>` and
-# push. Without an argument, release the version already in Cargo.toml at
-# HEAD (commit any bump yourself first). The recipe refuses a dirty
-# working copy, a HEAD without the release workflow, an already-existing
-# tag, or a release commit that main cannot fast-forward to. Untracked
-# files do not block the release.
+# publish it to crates.io, tag it `v<version>` and push. Without an argument,
+# release the version already in Cargo.toml at HEAD (commit any bump yourself
+# first). The recipe refuses a dirty working copy, a HEAD without the release
+# workflow, an already-existing tag, or a release commit that main cannot
+# fast-forward to. Untracked files do not block the release.
 # Advance `main` to the release commit and push `main` together with the
 # `v<version>` tag, so the tag push finds the release workflow on the
 # default branch and triggers it.
@@ -133,6 +133,9 @@ release version='':
     fi
 
     release_commit="$(git rev-parse HEAD)"
+    echo "Publishing ${version:-${current}} to crates.io"
+    cargo publish --locked
+
     echo "Creating tag ${tag} at $(git rev-parse --short HEAD)"
     git tag "${tag}"
 
