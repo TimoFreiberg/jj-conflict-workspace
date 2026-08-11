@@ -2,6 +2,12 @@
 name = "jj-conflict-workspace"
 version = "0.2.1"
 edition = "2024"
+repository = "https://github.com/TimoFreiberg/jj-conflict-workspace"
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/jcw-v{ version }-{ target }.tar.gz"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
 
 [lib]
 name = "jj_conflict_workspace"
